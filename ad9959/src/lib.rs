@@ -2,7 +2,23 @@
 
 use arbitrary_int::{traits::Integer, u2, u3, u4, u5, u10, u14, u24};
 use bitbybit::{bitenum, bitfield};
+use core::ops::Range;
 use embedded_hal::{blocking::delay::DelayUs, digital::v2::OutputPin};
+
+/// The minimum reference clock input frequency with REFCLK multiplier disabled.
+const MIN_REFCLK_FREQUENCY: f32 = 1e6;
+/// The minimum reference clock input frequency with REFCLK multiplier enabled.
+const MIN_MULTIPLIED_REFCLK_FREQUENCY: f32 = 10e6;
+/// The system clock frequency range with high gain configured for the internal VCO.
+const HIGH_GAIN_VCO_RANGE: Range<f32> = Range {
+    start: 255e6,
+    end: 500e6,
+};
+/// The system clock frequency range with low gain configured for the internal VCO.
+const LOW_GAIN_VCO_RANGE: Range<f32> = Range {
+    start: 100e6,
+    end: 160e6,
+};
 
 /// A trait that allows a HAL to provide a means of communicating with the AD9959.
 pub trait Interface {
@@ -483,6 +499,109 @@ impl<I: Interface> Ad9959<I> {
     pub fn freeze(self) -> (I, Mode) {
         (self.interface, self.mode)
     }
+}
+
+/// Validate the internal system clock configuration of the chip.
+///
+/// Arguments:
+/// * `reference_clock_frequency` - The reference clock frequency provided to the AD9959 core.
+/// * `multiplier` - The frequency multiplier of the system clock. Must be 1 or 4-20.
+///
+/// Returns:
+/// The system clock frequency to be configured.
+pub fn validate_clocking(
+    reference_clock_frequency: f32,
+    multiplier: u8,
+) -> Result<f32, Error> {
+    // The REFCLK frequency must be at least 1 MHz with REFCLK multiplier disabled.
+    if reference_clock_frequency < MIN_REFCLK_FREQUENCY {
+        return Err(Error::Bounds);
+    }
+    // If the REFCLK multiplier is enabled, the multiplier (FR1[22:18]) must be between 4 to 20.
+    // Alternatively, the clock multiplier can be disabled. The multiplication factor is 1.
+    if multiplier != 1 && !(4..=20).contains(&multiplier) {
+        return Err(Error::Bounds);
+    }
+    // If the REFCLK multiplier is enabled, the REFCLK frequency must be at least 10 MHz.
+    if multiplier != 1
+        && reference_clock_frequency < MIN_MULTIPLIED_REFCLK_FREQUENCY
+    {
+        return Err(Error::Bounds);
+    }
+    let frequency = multiplier as f32 * reference_clock_frequency;
+    // SYSCLK frequency between 255 MHz and 500 MHz (inclusive) is valid with high range VCO
+    if HIGH_GAIN_VCO_RANGE.contains(&frequency)
+        || frequency == HIGH_GAIN_VCO_RANGE.end
+    {
+        return Ok(frequency);
+    }
+
+    // SYSCLK frequency between 100 MHz and 160 MHz (inclusive) is valid with low range VCO
+    if LOW_GAIN_VCO_RANGE.contains(&frequency)
+        || frequency == LOW_GAIN_VCO_RANGE.end
+    {
+        return Ok(frequency);
+    }
+
+    // When the REFCLK multiplier is disabled, SYSCLK frequency can go below 100 MHz
+    if multiplier == 1 && (0.0..=LOW_GAIN_VCO_RANGE.start).contains(&frequency)
+    {
+        return Ok(frequency);
+    }
+
+    Err(Error::Frequency)
+}
+
+/// Convert and validate frequency into frequency tuning word.
+///
+/// Arguments:
+/// * `dds_frequency` - The DDS frequency to be converted and validated.
+/// * `system_clock_frequency` - The system clock frequency of the AD9959 core.
+///
+/// Returns:
+/// The corresponding frequency tuning word.
+pub fn frequency_to_ftw(
+    dds_frequency: f32,
+    system_clock_frequency: f32,
+) -> Result<u32, Error> {
+    // Output frequency should not exceed the Nyquist's frequency.
+    if !(0.0..=(system_clock_frequency / 2.0)).contains(&dds_frequency) {
+        return Err(Error::Bounds);
+    }
+    // The function for channel frequency is `f_out = FTW * f_s / 2^32`, where FTW is the
+    // frequency tuning word and f_s is the system clock rate.
+    Ok(((dds_frequency / system_clock_frequency) * (1u64 << 32) as f32) as u32)
+}
+
+/// Convert phase into phase offset word.
+///
+/// Arguments:
+/// * `phase_turns` - The normalized number of phase turns of a DDS channel.
+///
+/// Returns:
+/// The corresponding phase offset word.
+pub fn phase_to_pow(phase_turns: f32) -> Result<u16, Error> {
+    Ok((phase_turns * (1 << 14) as f32) as u16 & 0x3FFFu16)
+}
+
+/// Convert amplitude into amplitude control register values.
+///
+/// Arguments:
+/// * `amplitude` - The normalized amplitude of a DDS channel.
+///
+/// Returns:
+/// The corresponding value in the amplitude control register.
+pub fn amplitude_to_acr(amplitude: f32) -> Result<u32, Error> {
+    if !(0.0..=1.0).contains(&amplitude) {
+        return Err(Error::Bounds);
+    }
+
+    let asf = (amplitude * (1 << 10) as f32) as u16;
+    let acr = match u10::try_new(asf) {
+        Ok(asf) => Acr::default().with_multiplier(true).with_asf(asf),
+        Err(_) => Acr::default().with_multiplier(false),
+    };
+    Ok(acr.raw_value().into())
 }
 
 /// Represents a means of serializing a DDS profile for writing to a stream.

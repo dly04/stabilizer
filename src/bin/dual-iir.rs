@@ -35,7 +35,13 @@ use idsp::iir;
 use platform::{AppSettings, NetSettings};
 use serde::{Deserialize, Serialize};
 use signal_generator::{self, Source};
-use stabilizer::convert::{AdcCode, DacCode, Gain};
+use stabilizer::{
+    convert::{AdcCode, DacCode, Gain},
+    hardware:: {
+        pounder::{ClockConfig, PounderConfig},
+        setup::{Mezzanine, Pounder},
+    }
+};
 
 // The number of cascaded IIR biquads per channel. Select 1 or 2!
 const IIR_CASCADE_LENGTH: usize = 1;
@@ -173,6 +179,15 @@ pub struct DualIir {
     /// Can be multicast.
     #[tree(with=miniconf::leaf)]
     stream: stream::Target,
+    /// Specifies the config for pounder DDS clock configuration, DDS channels & attenuations
+    ///
+    /// # Path
+    /// `pounder`
+    ///
+    /// # Value
+    /// See [PounderConfig#miniconf]
+    #[tree]
+    pounder: Option<PounderConfig>,
 }
 
 impl Default for DualIir {
@@ -182,6 +197,7 @@ impl Default for DualIir {
             trigger: false,
             stream: Default::default(),
             ch: Default::default(),
+            pounder: None.into(),
         }
     }
 }
@@ -238,6 +254,7 @@ mod app {
         settings: Settings,
         active: [Active; 2],
         telemetry: TelemetryBuffer,
+        pounder: Option<Pounder>,
     }
 
     #[local]
@@ -248,6 +265,7 @@ mod app {
         afes: [Pgia; 2],
         adcs: (Adc0Input, Adc1Input),
         dacs: (Dac0Output, Dac1Output),
+        dds_clock_state: Option<ClockConfig>,
         generator: FrameGenerator,
         cpu_temp_sensor: stabilizer::hardware::cpu_temp_sensor::CpuTempSensor,
     }
@@ -257,7 +275,7 @@ mod app {
         let clock = SystemTimer::new(|| Systick::now().ticks());
 
         // Configure the microcontroller
-        let (stabilizer, _mezzanine, _eem) = hardware::setup::setup::<Settings>(
+        let (mut stabilizer, mezzanine, _eem) = hardware::setup::setup::<Settings>(
             c.core,
             c.device,
             clock,
@@ -276,6 +294,17 @@ mod app {
 
         let generator = network.configure_streaming(stream::Format::AdcDacData);
 
+        let pounder = match mezzanine {
+            Mezzanine::Pounder(pounder) => Some(pounder),
+            Mezzanine::None => None,
+        };
+        let dds_clock_state = pounder.as_ref().map(|_| ClockConfig::default());
+        if pounder.is_some() {
+            stabilizer.settings.dual_iir
+                .pounder
+                .replace(PounderConfig::default());
+        }
+
         let shared = Shared {
             usb: stabilizer.usb,
             network,
@@ -287,6 +316,7 @@ mod app {
                 .map(|a| a.build().unwrap()),
             telemetry: TelemetryBuffer::default(),
             settings: stabilizer.settings,
+            pounder,
         };
 
         let mut local = Local {
@@ -296,6 +326,7 @@ mod app {
             afes: stabilizer.afes,
             adcs: stabilizer.adcs,
             dacs: stabilizer.dacs,
+            dds_clock_state,
             generator,
             cpu_temp_sensor: stabilizer.temperature_sensor,
         };
@@ -448,7 +479,7 @@ mod app {
         }
     }
 
-    #[task(priority = 1, local=[afes], shared=[network, settings, active])]
+    #[task(priority = 1, local=[afes, dds_clock_state], shared=[network, settings, active, pounder])]
     async fn settings_update(mut c: settings_update::Context) {
         c.shared.settings.lock(|settings| {
             c.local.afes[0].set_gain(settings.dual_iir.ch[0].gain);
@@ -490,24 +521,40 @@ mod app {
                     (a.run, a.biquad) = b;
                 }
             });
+            // Update Pounder configurations
+            c.shared.pounder.lock(|pounder| {
+                if let Some(pounder) = pounder {
+                    let pounder_settings = settings.dual_iir.pounder.as_ref().unwrap();
+                    // let mut clocking = c.local.dds_clock_state;
+                    pounder.update_dds(
+                        *pounder_settings,
+                        c.local.dds_clock_state.as_mut().unwrap(),
+                    );
+                }
+            });
             c.shared
                 .network
                 .lock(|net| net.direct_stream(settings.dual_iir.stream));
         });
     }
 
-    #[task(priority = 1, shared=[network, settings, telemetry], local=[cpu_temp_sensor])]
+    #[task(priority = 1, shared=[network, settings, telemetry, pounder], local=[cpu_temp_sensor])]
     async fn telemetry(mut c: telemetry::Context) {
         loop {
             let telemetry =
                 c.shared.telemetry.lock(|telemetry| telemetry.clone());
 
-            let (gains, telemetry_period) =
+            let (gains, telemetry_period, pounder_config) =
                 c.shared.settings.lock(|settings| {
                     (
                         settings.dual_iir.ch.each_ref().map(|ch| ch.gain),
                         settings.dual_iir.telemetry_period,
+                        settings.dual_iir.pounder,
                     )
+                });
+
+            let pounder_telemetry = c.shared.pounder.lock(|pounder| {
+                pounder.as_mut().map(|pdr| pdr.get_telemetry(pounder_config.unwrap()))
                 });
 
             c.shared.network.lock(|net| {
@@ -517,6 +564,7 @@ mod app {
                         gains[0],
                         gains[1],
                         c.local.cpu_temp_sensor.get_temperature().unwrap(),
+                        pounder_telemetry,
                     ),
                 )
             });
