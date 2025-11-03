@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pystabilizer"
+version = "0.0"
+authors = [{name = "M-Labs"}]
+description = "Python utilities for the Sinara 8452 Stabilizer"
+license = {text = "GPLv3"}
+dependencies = [
+    
+]
+
+[project.gui-scripts]
+stabilzier_control_panel = "pystabilizer.control_panel:main"
+
