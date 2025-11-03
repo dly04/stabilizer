@@ -9,9 +9,11 @@ authors = [{name = "M-Labs"}]
 description = "Python utilities for the Sinara 8452 Stabilizer"
 license = {text = "GPLv3"}
 dependencies = [
-    
+    "pyqtgraph >= 0.13.7",
+    "pyqt6 >= 6.7.0",
+    "qasync >= 0.27.1",
 ]
 
 [project.gui-scripts]
-stabilzier_control_panel = "pystabilizer.control_panel:main"
+stabilizer_control_panel = "pystabilizer.control_panel:main"
 
