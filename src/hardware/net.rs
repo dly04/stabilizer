@@ -151,6 +151,22 @@ where
                 .unwrap(),
         );
 
+        stack_manager.start_tcp_server_debug(1234);
+        stack_manager.log_tcp_connections();
+
+        // log::info!("=== After MQTT Creation ===");
+        // for handle in stack.sockets.iter() {
+        //     if let Some(tcp_socket) = stack.sockets.get(handle) {
+        //         let local_endpoint = tcp_socket.local_endpoint();
+        //         let remote_endpoint = tcp_socket.remote_endpoint();
+                
+        //         if tcp_socket.is_active() {
+        //             log::info!("MQTT TCP Connection - Local: {:?}, Remote: {:?}, State: {:?}", 
+        //                     local_endpoint, remote_endpoint, tcp_socket.state());
+        //         }
+        //     }
+        // }
+
         let telemetry = TelemetryClient::new(mqtt, prefix, metadata);
 
         let (generator, stream) = stream::setup(stack_manager.acquire_stack());
@@ -276,6 +292,18 @@ impl NetworkProcessor {
         }
     }
 
+    pub fn start_tcp_server_debug(&mut self, port: u16) {
+        self.stack.lock(|stack| {
+            stack.start_tcp_server_debug(port);
+        });
+    }
+    
+    pub fn log_tcp_connections(&mut self) {
+        self.stack.lock(|stack| {
+            stack.log_tcp_connections();
+        });
+    }
+
     /// Handle ethernet link connection status.
     ///
     /// # Note
@@ -289,6 +317,7 @@ impl NetworkProcessor {
             (true, true) => {
                 log::warn!("Network link UP");
                 self.network_was_reset = false;
+                self.start_tcp_server_debug(1234);
             }
             // Only reset the network stack once per link reconnection. This prevents us from
             // sending an excessive number of DHCP requests.

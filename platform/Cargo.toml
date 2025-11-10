@@ -31,4 +31,4 @@ embedded-hal-02 = { package = "embedded-hal", version = "0.2.7", features = [
 [dependencies.smoltcp-nal]
 version = "0.6"
 features = ["shared-stack"]
-git = "https://github.com/quartiq/smoltcp-nal.git"
+path = "/home/dly/smoltcp-nal"

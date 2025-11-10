@@ -746,6 +746,13 @@ where
             }
         });
 
+        {
+            // 先打印信息（不可变借用）
+            log::info!("Maximum TCP sockets: {}", store.tcp_socket_storage.len());
+            log::info!("Maximum UDP sockets: {}", store.udp_socket_storage.len());
+            log::info!("Total socket slots: {}", store.sockets.len());
+        }
+
         let mut sockets =
             smoltcp::iface::SocketSet::new(&mut store.sockets[..]);
         for storage in store.tcp_socket_storage[..].iter_mut() {
@@ -793,6 +800,10 @@ where
             smoltcp_nal::NetworkStack::new(interface, eth_dma, sockets, clock);
 
         stack.seed_random_port(&random_seed);
+
+        // 添加这一行来记录IP
+        log::info!("Network IP: 111testing 111 {:?}", stack.interface().ipv4_addr());
+        log::info!("Random seed applied: {:?}", random_seed);
 
         NetworkDevices {
             stack,

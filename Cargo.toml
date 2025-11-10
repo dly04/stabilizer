@@ -91,7 +91,7 @@ platform = { version = "0.1", path = "platform" }
 [dependencies.smoltcp-nal]
 version = "0.6"
 features = ["shared-stack"]
-git = "https://github.com/quartiq/smoltcp-nal.git"
+path = "/home/dly/smoltcp-nal"
 
 [build-dependencies]
 built = { version = "0.8", features = ["git2"], default-features = false }
@@ -103,7 +103,7 @@ stm32h7xx-hal = { version = "0.16.0", features = [
 	"ethernet",
 	"xspi",
 	"usb_hs",
-], git = "https://github.com/stm32-rs/stm32h7xx-hal.git" }
+]}
 cortex-m = { version = "0.7.7", features = [
 	"inline-asm",
 	"critical-section-single-core",

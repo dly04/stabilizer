@@ -237,6 +237,7 @@ impl<N: UdpClientStack<Error = smoltcp_nal::NetworkError>> DataStream<N> {
             return Err(());
         }
 
+        log::info!("xxx");
         let mut socket = self.stack.socket().or(Err(()))?;
 
         // We may fail to connect if we don't have an IP address yet.
