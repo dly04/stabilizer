@@ -16,7 +16,7 @@ use core::fmt::Write;
 use heapless::String;
 use miniconf::{TreeDeserializeOwned, TreeSerialize};
 use miniconf_mqtt::minimq;
-// use smoltcp_nal::smoltcp;
+use smoltcp_nal::smoltcp;
 use smoltcp_nal::embedded_nal::TcpClientStack;
 use smoltcp_nal::NetworkError;
 use smoltcp_nal::smoltcp::iface::SocketHandle;
@@ -155,8 +155,8 @@ where
                 .unwrap(),
         );
 
-        // processor.start_tcp_server(5678);
-        processor.connect_to_host([192, 168, 1, 162], 8080);
+        processor.start_tcp_server(5678);
+        // processor.connect_to_host([192, 168, 1, 162], 8080);
         processor.log_tcp_connections();
 
         let telemetry = TelemetryClient::new(mqtt, prefix, metadata);
@@ -284,44 +284,44 @@ impl NetworkProcessor {
         }
     }
 
-    pub fn connect_to_host(&mut self, host_ip: [u8; 4], host_port: u16) {
-        let _ = self.stack.lock(|stack| {
-            // 尝试获取套接字，失败就返回
-            let Ok(mut socket) = stack.socket() else {
-                log::warn!("No socket available");
-                return;
-            };
+    // pub fn connect_to_host(&mut self, host_ip: [u8; 4], host_port: u16) {
+    //     let _ = self.stack.lock(|stack| {
+    //         // 尝试获取套接字，失败就返回
+    //         let Ok(mut socket) = stack.socket() else {
+    //             log::warn!("No socket available");
+    //             return;
+    //         };
             
-            let addr = core::net::SocketAddr::new(
-                core::net::IpAddr::V4(core::net::Ipv4Addr::new(
-                    host_ip[0], host_ip[1], host_ip[2], host_ip[3]
-                )),
-                host_port
-            );
+    //         let addr = core::net::SocketAddr::new(
+    //             core::net::IpAddr::V4(core::net::Ipv4Addr::new(
+    //                 host_ip[0], host_ip[1], host_ip[2], host_ip[3]
+    //             )),
+    //             host_port
+    //         );
             
-            // 尝试连接，忽略所有错误
-            let _ = stack.connect(&mut socket, addr);
+    //         // 尝试连接，忽略所有错误
+    //         let _ = stack.connect(&mut socket, addr);
             
-            log::info!("Attempted connection to {}.{}.{}.{}:{}", 
-                      host_ip[0], host_ip[1], host_ip[2], host_ip[3], host_port);
-        });
-    }
-
-    // pub fn start_tcp_server(&mut self, port: u16) -> Result<(), ()> {
-    //     self.stack.lock(|stack| {
-    //         for (handle, socket) in stack.sockets.iter_mut() {
-    //             if let smoltcp::socket::Socket::Tcp(tcp_socket) = socket {
-    //                 if !tcp_socket.is_active() && !tcp_socket.is_listening() {
-    //                     if tcp_socket.listen(port).is_ok() {
-    //                         log::info!("TCP server started on port {}", port);
-    //                         return Ok(());
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //         Err(())
-    //     })
+    //         log::info!("Attempted connection to {}.{}.{}.{}:{}", 
+    //                   host_ip[0], host_ip[1], host_ip[2], host_ip[3], host_port);
+    //     });
     // }
+
+    pub fn start_tcp_server(&mut self, port: u16) -> Result<(), ()> {
+        self.stack.lock(|stack| {
+            for (handle, socket) in stack.sockets.iter_mut() {
+                if let smoltcp::socket::Socket::Tcp(tcp_socket) = socket {
+                    if !tcp_socket.is_active() && !tcp_socket.is_listening() {
+                        if tcp_socket.listen(port).is_ok() {
+                            log::info!("TCP server started on port {}", port);
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            Err(())
+        })
+    }
 
     pub fn log_tcp_connections(&mut self) {
         self.stack.lock(|stack| {
@@ -367,8 +367,8 @@ impl NetworkProcessor {
             (true, true) => {
                 log::warn!("Network link UP");
                 self.network_was_reset = false;
-                // self.start_tcp_server(5678);
-                self.connect_to_host([192, 168, 1, 162], 8080);
+                self.start_tcp_server(5678);
+                // self.connect_to_host([192, 168, 1, 162], 8080);
             }
             // Only reset the network stack once per link reconnection. This prevents us from
             // sending an excessive number of DHCP requests.
