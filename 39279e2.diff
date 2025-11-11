@@ -1,0 +1,730 @@
+diff --git a/ad9959/src/lib.rs b/ad9959/src/lib.rs
+index 59e5137..6c9825a 100644
+--- a/ad9959/src/lib.rs
++++ b/ad9959/src/lib.rs
+@@ -2,8 +2,24 @@
+ 
+ use arbitrary_int::{traits::Integer, u2, u3, u4, u5, u10, u14, u24};
+ use bitbybit::{bitenum, bitfield};
++use core::ops::Range;
+ use embedded_hal::{blocking::delay::DelayUs, digital::v2::OutputPin};
+ 
++/// The minimum reference clock input frequency with REFCLK multiplier disabled.
++const MIN_REFCLK_FREQUENCY: f32 = 1e6;
++/// The minimum reference clock input frequency with REFCLK multiplier enabled.
++const MIN_MULTIPLIED_REFCLK_FREQUENCY: f32 = 10e6;
++/// The system clock frequency range with high gain configured for the internal VCO.
++const HIGH_GAIN_VCO_RANGE: Range<f32> = Range {
++    start: 255e6,
++    end: 500e6,
++};
++/// The system clock frequency range with low gain configured for the internal VCO.
++const LOW_GAIN_VCO_RANGE: Range<f32> = Range {
++    start: 100e6,
++    end: 160e6,
++};
++
+ /// A trait that allows a HAL to provide a means of communicating with the AD9959.
+ pub trait Interface {
+     type Error;
+@@ -485,6 +501,109 @@ impl<I: Interface> Ad9959<I> {
+     }
+ }
+ 
++/// Validate the internal system clock configuration of the chip.
++///
++/// Arguments:
++/// * `reference_clock_frequency` - The reference clock frequency provided to the AD9959 core.
++/// * `multiplier` - The frequency multiplier of the system clock. Must be 1 or 4-20.
++///
++/// Returns:
++/// The system clock frequency to be configured.
++pub fn validate_clocking(
++    reference_clock_frequency: f32,
++    multiplier: u8,
++) -> Result<f32, Error> {
++    // The REFCLK frequency must be at least 1 MHz with REFCLK multiplier disabled.
++    if reference_clock_frequency < MIN_REFCLK_FREQUENCY {
++        return Err(Error::Bounds);
++    }
++    // If the REFCLK multiplier is enabled, the multiplier (FR1[22:18]) must be between 4 to 20.
++    // Alternatively, the clock multiplier can be disabled. The multiplication factor is 1.
++    if multiplier != 1 && !(4..=20).contains(&multiplier) {
++        return Err(Error::Bounds);
++    }
++    // If the REFCLK multiplier is enabled, the REFCLK frequency must be at least 10 MHz.
++    if multiplier != 1
++        && reference_clock_frequency < MIN_MULTIPLIED_REFCLK_FREQUENCY
++    {
++        return Err(Error::Bounds);
++    }
++    let frequency = multiplier as f32 * reference_clock_frequency;
++    // SYSCLK frequency between 255 MHz and 500 MHz (inclusive) is valid with high range VCO
++    if HIGH_GAIN_VCO_RANGE.contains(&frequency)
++        || frequency == HIGH_GAIN_VCO_RANGE.end
++    {
++        return Ok(frequency);
++    }
++
++    // SYSCLK frequency between 100 MHz and 160 MHz (inclusive) is valid with low range VCO
++    if LOW_GAIN_VCO_RANGE.contains(&frequency)
++        || frequency == LOW_GAIN_VCO_RANGE.end
++    {
++        return Ok(frequency);
++    }
++
++    // When the REFCLK multiplier is disabled, SYSCLK frequency can go below 100 MHz
++    if multiplier == 1 && (0.0..=LOW_GAIN_VCO_RANGE.start).contains(&frequency)
++    {
++        return Ok(frequency);
++    }
++
++    Err(Error::Frequency)
++}
++
++/// Convert and validate frequency into frequency tuning word.
++///
++/// Arguments:
++/// * `dds_frequency` - The DDS frequency to be converted and validated.
++/// * `system_clock_frequency` - The system clock frequency of the AD9959 core.
++///
++/// Returns:
++/// The corresponding frequency tuning word.
++pub fn frequency_to_ftw(
++    dds_frequency: f32,
++    system_clock_frequency: f32,
++) -> Result<u32, Error> {
++    // Output frequency should not exceed the Nyquist's frequency.
++    if !(0.0..=(system_clock_frequency / 2.0)).contains(&dds_frequency) {
++        return Err(Error::Bounds);
++    }
++    // The function for channel frequency is `f_out = FTW * f_s / 2^32`, where FTW is the
++    // frequency tuning word and f_s is the system clock rate.
++    Ok(((dds_frequency / system_clock_frequency) * (1u64 << 32) as f32) as u32)
++}
++
++/// Convert phase into phase offset word.
++///
++/// Arguments:
++/// * `phase_turns` - The normalized number of phase turns of a DDS channel.
++///
++/// Returns:
++/// The corresponding phase offset word.
++pub fn phase_to_pow(phase_turns: f32) -> Result<u16, Error> {
++    Ok((phase_turns * (1 << 14) as f32) as u16 & 0x3FFFu16)
++}
++
++/// Convert amplitude into amplitude control register values.
++///
++/// Arguments:
++/// * `amplitude` - The normalized amplitude of a DDS channel.
++///
++/// Returns:
++/// The corresponding value in the amplitude control register.
++pub fn amplitude_to_acr(amplitude: f32) -> Result<u32, Error> {
++    if !(0.0..=1.0).contains(&amplitude) {
++        return Err(Error::Bounds);
++    }
++
++    let asf = (amplitude * (1 << 10) as f32) as u16;
++    let acr = match u10::try_new(asf) {
++        Ok(asf) => Acr::default().with_multiplier(true).with_asf(asf),
++        Err(_) => Acr::default().with_multiplier(false),
++    };
++    Ok(acr.raw_value().into())
++}
++
+ /// Represents a means of serializing a DDS profile for writing to a stream.
+ pub struct ProfileSerializer {
+     mode: Mode,
+diff --git a/src/bin/dual-iir.rs b/src/bin/dual-iir.rs
+index c6eb802..9fba6a0 100644
+--- a/src/bin/dual-iir.rs
++++ b/src/bin/dual-iir.rs
+@@ -35,7 +35,13 @@ use idsp::iir;
+ use platform::{AppSettings, NetSettings};
+ use serde::{Deserialize, Serialize};
+ use signal_generator::{self, Source};
+-use stabilizer::convert::{AdcCode, DacCode, Gain};
++use stabilizer::{
++    convert::{AdcCode, DacCode, Gain},
++    hardware:: {
++        pounder::{ClockConfig, PounderConfig},
++        setup::{Mezzanine, Pounder},
++    }
++};
+ 
+ // The number of cascaded IIR biquads per channel. Select 1 or 2!
+ const IIR_CASCADE_LENGTH: usize = 1;
+@@ -173,6 +179,15 @@ pub struct DualIir {
+     /// Can be multicast.
+     #[tree(with=miniconf::leaf)]
+     stream: stream::Target,
++    /// Specifies the config for pounder DDS clock configuration, DDS channels & attenuations
++    ///
++    /// # Path
++    /// `pounder`
++    ///
++    /// # Value
++    /// See [PounderConfig#miniconf]
++    #[tree]
++    pounder: Option<PounderConfig>,
+ }
+ 
+ impl Default for DualIir {
+@@ -182,6 +197,7 @@ impl Default for DualIir {
+             trigger: false,
+             stream: Default::default(),
+             ch: Default::default(),
++            pounder: None.into(),
+         }
+     }
+ }
+@@ -238,6 +254,7 @@ mod app {
+         settings: Settings,
+         active: [Active; 2],
+         telemetry: TelemetryBuffer,
++        pounder: Option<Pounder>,
+     }
+ 
+     #[local]
+@@ -248,6 +265,7 @@ mod app {
+         afes: [Pgia; 2],
+         adcs: (Adc0Input, Adc1Input),
+         dacs: (Dac0Output, Dac1Output),
++        dds_clock_state: Option<ClockConfig>,
+         generator: FrameGenerator,
+         cpu_temp_sensor: stabilizer::hardware::cpu_temp_sensor::CpuTempSensor,
+     }
+@@ -257,7 +275,7 @@ mod app {
+         let clock = SystemTimer::new(|| Systick::now().ticks());
+ 
+         // Configure the microcontroller
+-        let (stabilizer, _mezzanine, _eem) = hardware::setup::setup::<Settings>(
++        let (mut stabilizer, mezzanine, _eem) = hardware::setup::setup::<Settings>(
+             c.core,
+             c.device,
+             clock,
+@@ -276,6 +294,17 @@ mod app {
+ 
+         let generator = network.configure_streaming(stream::Format::AdcDacData);
+ 
++        let pounder = match mezzanine {
++            Mezzanine::Pounder(pounder) => Some(pounder),
++            Mezzanine::None => None,
++        };
++        let dds_clock_state = pounder.as_ref().map(|_| ClockConfig::default());
++        if pounder.is_some() {
++            stabilizer.settings.dual_iir
++                .pounder
++                .replace(PounderConfig::default());
++        }
++
+         let shared = Shared {
+             usb: stabilizer.usb,
+             network,
+@@ -287,6 +316,7 @@ mod app {
+                 .map(|a| a.build().unwrap()),
+             telemetry: TelemetryBuffer::default(),
+             settings: stabilizer.settings,
++            pounder,
+         };
+ 
+         let mut local = Local {
+@@ -296,6 +326,7 @@ mod app {
+             afes: stabilizer.afes,
+             adcs: stabilizer.adcs,
+             dacs: stabilizer.dacs,
++            dds_clock_state,
+             generator,
+             cpu_temp_sensor: stabilizer.temperature_sensor,
+         };
+@@ -448,7 +479,7 @@ mod app {
+         }
+     }
+ 
+-    #[task(priority = 1, local=[afes], shared=[network, settings, active])]
++    #[task(priority = 1, local=[afes, dds_clock_state], shared=[network, settings, active, pounder])]
+     async fn settings_update(mut c: settings_update::Context) {
+         c.shared.settings.lock(|settings| {
+             c.local.afes[0].set_gain(settings.dual_iir.ch[0].gain);
+@@ -490,26 +521,42 @@ mod app {
+                     (a.run, a.biquad) = b;
+                 }
+             });
++            // Update Pounder configurations
++            c.shared.pounder.lock(|pounder| {
++                if let Some(pounder) = pounder {
++                    let pounder_settings = settings.dual_iir.pounder.as_ref().unwrap();
++                    // let mut clocking = c.local.dds_clock_state;
++                    pounder.update_dds(
++                        *pounder_settings,
++                        c.local.dds_clock_state.as_mut().unwrap(),
++                    );
++                }
++            });
+             c.shared
+                 .network
+                 .lock(|net| net.direct_stream(settings.dual_iir.stream));
+         });
+     }
+ 
+-    #[task(priority = 1, shared=[network, settings, telemetry], local=[cpu_temp_sensor])]
++    #[task(priority = 1, shared=[network, settings, telemetry, pounder], local=[cpu_temp_sensor])]
+     async fn telemetry(mut c: telemetry::Context) {
+         loop {
+             let telemetry =
+                 c.shared.telemetry.lock(|telemetry| telemetry.clone());
+ 
+-            let (gains, telemetry_period) =
++            let (gains, telemetry_period, pounder_config) =
+                 c.shared.settings.lock(|settings| {
+                     (
+                         settings.dual_iir.ch.each_ref().map(|ch| ch.gain),
+                         settings.dual_iir.telemetry_period,
++                        settings.dual_iir.pounder,
+                     )
+                 });
+ 
++            let pounder_telemetry = c.shared.pounder.lock(|pounder| {
++                pounder.as_mut().map(|pdr| pdr.get_telemetry(pounder_config.unwrap()))
++                });
++
+             c.shared.network.lock(|net| {
+                 net.telemetry.publish_telemetry(
+                     "/telemetry",
+@@ -517,6 +564,7 @@ mod app {
+                         gains[0],
+                         gains[1],
+                         c.local.cpu_temp_sensor.get_temperature().unwrap(),
++                        pounder_telemetry,
+                     ),
+                 )
+             });
+diff --git a/src/bin/lockin.rs b/src/bin/lockin.rs
+index c46c575..bccad0f 100644
+--- a/src/bin/lockin.rs
++++ b/src/bin/lockin.rs
+@@ -500,6 +500,7 @@ mod app {
+                         *gains[0],
+                         *gains[1],
+                         c.local.cpu_temp_sensor.get_temperature().unwrap(),
++                        None,
+                     ),
+                 )
+             });
+diff --git a/src/hardware/net.rs b/src/hardware/net.rs
+index 1edfcca..50f306d 100644
+--- a/src/hardware/net.rs
++++ b/src/hardware/net.rs
+@@ -42,14 +42,14 @@ pub type NetworkManager = smoltcp_nal::shared::NetworkManager<
+ 
+ struct MqttStorage {
+     telemetry: [u8; 2048],
+-    settings: [u8; 1024],
++    settings: [u8; 1536],
+ }
+ 
+ impl Default for MqttStorage {
+     fn default() -> Self {
+         Self {
+             telemetry: [0u8; 2048],
+-            settings: [0u8; 1024],
++            settings: [0u8; 1536],
+         }
+     }
+ }
+diff --git a/src/hardware/pounder/dds_output.rs b/src/hardware/pounder/dds_output.rs
+index 9e7e743..ab8b4c5 100644
+--- a/src/hardware/pounder/dds_output.rs
++++ b/src/hardware/pounder/dds_output.rs
+@@ -54,8 +54,9 @@
+ //! buffer to avoid the software overhead of much of the serialization process.
+ use log::warn;
+ 
+-use super::{QspiInterface, hal, hrtimer::HighResTimerE};
+-use ad9959::{Mode, ProfileSerializer};
++use arbitrary_int::{u14, u24};
++use super::{Profile, QspiInterface, hal, hrtimer::HighResTimerE};
++use ad9959::{Acr, Channel, Mode, ProfileSerializer};
+ 
+ /// The DDS profile update stream.
+ pub struct DdsOutput {
+@@ -90,8 +91,9 @@ impl DdsOutput {
+     }
+ 
+     /// Get a builder for serializing a Pounder DDS profile.
+-    pub fn builder(&mut self) -> ProfileSerializer {
+-        ProfileSerializer::new(self.mode)
++    pub fn builder(&mut self) -> ProfileBuilder<'_> {
++        let mode = self.mode;
++        ProfileBuilder {dds_output: self, serializer: ProfileSerializer::new(mode)}
+     }
+ 
+     /// Write a profile to the stream.
+@@ -104,7 +106,7 @@ impl DdsOutput {
+     /// # Args
+     /// * `profile` - The serialized DDS profile to write.
+     #[inline]
+-    pub fn write(&mut self, mut profile: ProfileSerializer) {
++    pub fn write(&mut self, profile: &mut ProfileSerializer) {
+         // Note(unsafe): We own the QSPI interface, so it is safe to access the registers in a raw
+         // fashion.
+         let regs = unsafe { &*hal::stm32::QUADSPI::ptr() };
+@@ -123,3 +125,69 @@ impl DdsOutput {
+         self.io_update_trigger.trigger();
+     }
+ }
++
++/// A temporary builder for serializing and writing profiles.
++pub struct ProfileBuilder<'a> {
++    dds_output: &'a mut DdsOutput,
++    serializer: ProfileSerializer,
++}
++
++impl ProfileBuilder<'_> {
++    /// Update a number of channels with the provided configuration
++    ///
++    /// # Args
++    /// * `channels` - A list of channels to apply the configuration to.
++    /// * `ftw` - If provided, indicates a frequency tuning word for the channels.
++    /// * `pow` - If provided, indicates a phase offset word for the channels.
++    /// * `acr` - If provided, indicates the amplitude control register for the channels. The
++    ///   24-bits of the ACR should be stored in the last 3 LSB.
++    #[allow(dead_code)]
++    #[inline]
++    pub fn update_channels(
++        &mut self,
++        channels: Channel,
++        ftw: Option<u32>,
++        pow: Option<u16>,
++        acr: Option<u32>,
++    ) -> &mut Self {
++        let pow = if let Some(pow) = pow {
++            Some(u14::try_new(pow & 0x3FFF).unwrap())
++        } else { None };
++        let acr = if let Some(acr) = acr {
++            Some(Acr::new_with_raw_value(u24::try_new(acr).unwrap()))
++        } else { None };
++        self.serializer.push(channels, ftw, pow, acr);
++        self
++    }
++
++    /// Update a number of channels with fully defined profile settings.
++    ///
++    /// # Args
++    /// * `channels` - A set of channels to apply the configuration to.
++    /// * `profile` - The complete DDS profile, which defines the frequency tuning word,
++    ///   amplitude control register & the phase offset word of the channels.
++    /// # Note
++    /// The ACR should be stored in the 3 LSB of the word.
++    /// If amplitude scaling is to be used, the "Amplitude multiplier enable" bit must be set.
++    #[inline]
++    pub fn update_channels_with_profile(
++        &mut self,
++        channels: Channel,
++        profile: Profile,
++    ) -> &mut Self {
++        self.serializer.push(
++            channels,
++            Some(profile.frequency_tuning_word),
++            Some(u14::try_new(profile.phase_offset & 0x3FFF).unwrap()),
++            Some(Acr::new_with_raw_value(u24::try_new(profile.amplitude_control).unwrap())),
++        );
++        self
++    }
++
++    /// Write the profile to the DDS asynchronously.
++    #[allow(dead_code)]
++    #[inline]
++    pub fn write(&mut self) {
++        self.dds_output.write(&mut self.serializer);
++    }
++}
+diff --git a/src/hardware/pounder/mod.rs b/src/hardware/pounder/mod.rs
+index ea53d1c..38ff6a3 100644
+--- a/src/hardware/pounder/mod.rs
++++ b/src/hardware/pounder/mod.rs
+@@ -1,9 +1,12 @@
+ use super::hal;
+-use crate::hardware::{I2c1Proxy, shared_adc::AdcChannel};
+-use ad9959::Address;
++use crate::hardware::{setup, I2c1Proxy, shared_adc::AdcChannel};
++use crate::telemetry::PounderTelemetry;
++use ad9959::{Address, frequency_to_ftw, phase_to_pow, amplitude_to_acr, validate_clocking};
+ use embedded_hal_02::blocking::spi::Transfer;
++use miniconf::{Leaf, Tree};
+ use serde::{Deserialize, Serialize};
+ use strum::IntoEnumIterator;
++use stm32h7xx_hal::time::MegaHertz;
+ 
+ pub mod dds_output;
+ pub mod hrtimer;
+@@ -117,38 +120,97 @@ impl From<Channel> for GpioPin {
+     }
+ }
+ 
+-#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+-pub struct DdsChannelState {
+-    pub phase_offset: f32,
+-    pub frequency: f32,
+-    pub amplitude: f32,
+-    pub enabled: bool,
++#[derive(Serialize, Deserialize, Copy, Clone, Debug, Tree)]
++pub struct DdsChannelConfig {
++    pub frequency: Leaf<f32>,
++    pub phase_offset: Leaf<f32>,
++    pub amplitude: Leaf<f32>,
+ }
+ 
+-#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+-pub struct ChannelState {
+-    pub parameters: DdsChannelState,
+-    pub attenuation: f32,
++impl Default for DdsChannelConfig {
++    fn default() -> Self {
++        Self {
++            frequency: Leaf(0.0),
++            phase_offset: Leaf(0.0),
++            amplitude: Leaf(0.0),
++        }
++    }
++}
++
++/// Represents a fully defined DDS profile, with parameters expressed in machine units
++pub struct Profile {
++    /// A 32-bits representation of DDS frequency in relation to the system clock frequency.
++    /// This value corresponds to the AD9959 CFTW0 register, which specifies the frequency
++    /// of DDS channels.
++    pub frequency_tuning_word: u32,
++    /// The DDS phase offset. It corresponds to the AD9959 CPOW0 register, which specifies
++    /// the phase offset of DDS channels.
++    pub phase_offset: u16,
++    /// Control amplitudes of DDS channels. It corresponds to the AD9959 ACR register, which
++    /// controls the amplitude scaling factor of DDS channels.
++    pub amplitude_control: u32,
++}
++
++impl TryFrom<(ClockConfig, ChannelConfig)> for Profile {
++    type Error = ad9959::Error;
++
++    fn try_from(
++        (clocking, channel): (ClockConfig, ChannelConfig),
++    ) -> Result<Self, Self::Error> {
++        let system_clock_frequency =
++            *clocking.reference_clock * *clocking.multiplier as f32;
++        Ok(Profile {
++            frequency_tuning_word: frequency_to_ftw(
++                *channel.dds.frequency,
++                system_clock_frequency,
++            )?,
++            phase_offset: phase_to_pow(*channel.dds.phase_offset)?,
++            amplitude_control: amplitude_to_acr(*channel.dds.amplitude)?,
++        })
++    }
+ }
+ 
+-#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+-pub struct InputChannelState {
+-    pub attenuation: f32,
+-    pub power: f32,
+-    pub mixer: DdsChannelState,
++#[derive(Serialize, Deserialize, Copy, Clone, Debug, Tree)]
++pub struct ChannelConfig {
++    #[tree]
++    pub dds: DdsChannelConfig,
++    pub attenuation: Leaf<f32>,
+ }
+ 
+-#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+-pub struct OutputChannelState {
+-    pub attenuation: f32,
+-    pub channel: DdsChannelState,
++impl Default for ChannelConfig {
++    fn default() -> Self {
++        ChannelConfig {
++            dds: DdsChannelConfig::default(),
++            attenuation: Leaf(31.5),
++        }
++    }
++}
++
++#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Tree)]
++pub struct ClockConfig {
++    pub multiplier: Leaf<u8>,
++    pub reference_clock: Leaf<f32>,
++    pub external_clock: Leaf<bool>,
++}
++
++impl Default for ClockConfig {
++    fn default() -> Self {
++        Self {
++            multiplier: Leaf(5),
++            reference_clock: Leaf(MegaHertz::MHz(100).to_Hz() as f32),
++            external_clock: Leaf(false),
++        }
++    }
+ }
+ 
+-#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+-pub struct DdsClockConfig {
+-    pub multiplier: u8,
+-    pub reference_clock: f32,
+-    pub external_clock: bool,
++#[derive(Copy, Clone, Debug, Default, Deserialize, Serialize, Tree)]
++pub struct PounderConfig {
++    #[tree]
++    pub clock: ClockConfig,
++    #[tree]
++    pub in_channel: [ChannelConfig; 2],
++    #[tree]
++    pub out_channel: [ChannelConfig; 2],
+ }
+ 
+ impl From<Channel> for ad9959::Channel {
+@@ -649,3 +711,79 @@ impl PounderDevices {
+         Ok(analog_measurement * (1. / 0.0517) + (-58. + 20.))
+     }
+ }
++
++impl setup::Pounder {
++    pub fn update_dds(
++        &mut self,
++        settings: PounderConfig,
++        clocking: &mut ClockConfig,
++    ) {
++        if *clocking != settings.clock {
++            match validate_clocking(
++                *settings.clock.reference_clock,
++                *settings.clock.multiplier,
++            ) {
++                Ok(_frequency) => {
++                    self.pounder
++                        .set_ext_clk(*settings.clock.external_clock)
++                        .unwrap();
++
++                    // skip since ad9959 should already set up the clock
++                    // self.dds_output
++                    //     .builder()
++                    //     .set_system_clock(
++                    //         *settings.clock.reference_clock,
++                    //         *settings.clock.multiplier,
++                    //     )
++                    //     .unwrap()
++                    //     .write();
++
++                    *clocking = settings.clock;
++                }
++                Err(err) => {
++                    log::error!("Invalid AD9959 clocking parameters: {:?}", err)
++                }
++            }
++        }
++
++        for (channel_config, pounder_channel) in settings
++            .in_channel
++            .iter()
++            .chain(settings.out_channel.iter())
++            .zip([Channel::In0, Channel::In1, Channel::Out0, Channel::Out1])
++        {
++            match Profile::try_from((*clocking, *channel_config)) {
++                Ok(dds_profile) => {
++                    self.dds_output
++                        .builder()
++                        .update_channels_with_profile(
++                            pounder_channel.into(),
++                            dds_profile,
++                        )
++                        .write();
++
++                    if let Err(err) = self.pounder.set_attenuation(
++                        pounder_channel,
++                        *channel_config.attenuation,
++                    ) {
++                        log::error!("Invalid attenuation settings: {:?}", err)
++                    }
++                }
++                Err(err) => {
++                    log::error!("Invalid AD9959 profile settings: {:?}", err)
++                }
++            }
++        }
++    }
++
++    pub fn get_telemetry(&mut self, config: PounderConfig) -> PounderTelemetry {
++        PounderTelemetry {
++            temperature: self.pounder.lm75.read_temperature().unwrap(),
++            input_power: [
++                self.pounder.measure_power(Channel::In0).unwrap(),
++                self.pounder.measure_power(Channel::In1).unwrap(),
++            ],
++            config,
++        }
++    }
++}
+\ No newline at end of file
+diff --git a/src/telemetry.rs b/src/telemetry.rs
+index ffbba8d..5900a76 100644
+--- a/src/telemetry.rs
++++ b/src/telemetry.rs
+@@ -1,5 +1,6 @@
+ use crate::convert::{AdcCode, DacCode, Gain};
+ use serde::Serialize;
++use crate::hardware::{pounder::PounderConfig};
+ 
+ /// The telemetry buffer is used for storing sample values during execution.
+ ///
+@@ -35,6 +36,26 @@ pub struct Telemetry {
+ 
+     /// The CPU temperature in degrees Celsius.
+     pub cpu_temp: f32,
++
++    /// Measurements related to Pounder
++    pub pounder: Option<PounderTelemetry>,
++}
++
++/// The structure that holds the telemetry related to Pounder.
++///
++/// # Note
++/// This structure should be generated on-demand by the buffer when required to minimize conversion
++/// overhead.
++#[derive(Copy, Clone, Serialize)]
++pub struct PounderTelemetry {
++    /// The Pounder temperature in degrees Celsius
++    pub temperature: f32,
++
++    /// The detected RF power into IN channels
++    pub input_power: [f32; 2],
++
++    /// The configuration of the clock and DDS channels
++    pub config: PounderConfig,
+ }
+ 
+ impl TelemetryBuffer {
+@@ -44,10 +65,17 @@ impl TelemetryBuffer {
+     /// * `afe0` - The current AFE configuration for channel 0.
+     /// * `afe1` - The current AFE configuration for channel 1.
+     /// * `cpu_temp` - The current CPU temperature.
++    /// * `pounder` - The current Pounder telemetry.
+     ///
+     /// # Returns
+     /// The finalized telemetry structure that can be serialized and reported.
+-    pub fn finalize(self, afe0: Gain, afe1: Gain, cpu_temp: f32) -> Telemetry {
++    pub fn finalize(
++        self,
++        afe0: Gain,
++        afe1: Gain,
++        cpu_temp: f32,
++        pounder: Option<PounderTelemetry>,
++    ) -> Telemetry {
+         let in0_volts = f32::from(self.adcs[0]) / afe0.gain();
+         let in1_volts = f32::from(self.adcs[1]) / afe1.gain();
+ 
+@@ -56,6 +84,7 @@ impl TelemetryBuffer {
+             adcs: [in0_volts, in1_volts],
+             dacs: [self.dacs[0].into(), self.dacs[1].into()],
+             digital_inputs: self.digital_inputs,
++            pounder,
+         }
+     }
+ }

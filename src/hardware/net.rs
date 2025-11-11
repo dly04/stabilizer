@@ -397,3 +397,29 @@ impl NetworkProcessor {
         }
     }
 }
+
+/*
+python3 -c "
+import socket, time
+s = socket.socket()
+s.bind(('0.0.0.0', 8080))
+s.listen(1)
+print('🚀 TCP Server started on port 8080')
+print('📡 Waiting for device connection...')
+client, addr = s.accept()
+print(f'✅ Device connected: {addr}')
+client.send(b'Welcome from host!\\n')
+while True:
+    try:
+        data = client.recv(1024)
+        if data:
+            print('Received:', data.decode().strip())
+            client.send(b'Echo: ' + data)
+        else:
+            break
+    except:
+        break
+print('❌ Connection closed')
+client.close()
+"
+*/
