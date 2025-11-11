@@ -17,6 +17,27 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._stabilizer = Stabilizer(self)
         self._connecting_task = None
+        self._stabilizer.connection_state_update.connect(
+            self._on_connection_state_changed
+        )
+
+    @pyqtSlot(StabilizerConnectionState)
+    def _on_connection_state_changed(self, state):
+
+        match state:
+            case StabilizerConnectionState.CONNECTED:
+                self.connect_btn.setText("Disconnect")
+                self.status_lbl.setText(
+                    "Connected to Stabilizer"
+                )
+
+            case StabilizerConnectionState.CONNECTING:
+                self.connect_btn.setText("Stop")
+                self.status_lbl.setText("Connecting...")
+
+            case StabilizerConnectionState.DISCONNECTED:
+                self.connect_btn.setText("Connect")
+                self.status_lbl.setText("Disconnected")
 
     @asyncSlot()
     async def on_connect_btn_clicked(self):
@@ -24,10 +45,9 @@ class MainWindow(QtWidgets.QMainWindow):
             case StabilizerConnectionState.DISCONNECTED:
                 self._connecting_task = asyncio.current_task()
                 self._stabilizer.connection_state = StabilizerConnectionState.CONNECTING
-                await self._stabilizer.start_session(
-                    host=self.connection_details_menu.host_set_line.text(),
-                    port=self.connection_details_menu.port_set_spin.value(),
-                )
+                print("starting to connect")
+                await self._stabilizer.start_session()
+                print("connected")
                 self._connecting_task = None
                 self._stabilizer.connection_state = StabilizerConnectionState.CONNECTED
                 self._stabilizer.start_watching()

@@ -364,14 +364,14 @@ impl NetworkProcessor {
                         }
                     }
                     
-                    else if !tcp_socket.is_active() && !tcp_socket.is_listening() {
-                        if self.tcp_server_initialized {
-                            if tcp_socket.listen(self.tcp_port).is_ok() {
-                                log::debug!("Re-established TCP listening on port {}", self.tcp_port);
-                                updated = UpdateState::Updated;
-                            }
-                        }
-                    }
+                    // else if !tcp_socket.is_active() && !tcp_socket.is_listening() {
+                    //     if self.tcp_server_initialized {
+                    //         if tcp_socket.listen(self.tcp_port).is_ok() {
+                    //             log::debug!("Re-established TCP listening on port {}", self.tcp_port);
+                    //             updated = UpdateState::Updated;
+                    //         }
+                    //     }
+                    // }
                 }
             }
         });
@@ -424,6 +424,7 @@ impl NetworkProcessor {
         };
 
         let tcp_updated = self.process_tcp_sockets();
+        // let tcp_updated = UpdateState::NoChange;
 
         match (network_updated, tcp_updated) {
             (UpdateState::Updated, _) | (_, UpdateState::Updated) => UpdateState::Updated,

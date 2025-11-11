@@ -1,6 +1,5 @@
 import asyncio
 import json
-import logging
 
 
 class CommandError(Exception):
@@ -13,7 +12,7 @@ class AsyncioClient:
         self._writer = None
         self._read_lock = asyncio.Lock()
 
-    async def connect(self, host="192.168.1.26", port=23):
+    async def connect(self, host="192.168.1.33", port=5678):
         """Connect to Thermostat at specified host and port.
 
         Example::
@@ -21,7 +20,6 @@ class AsyncioClient:
             await client.connect()
         """
         self._reader, self._writer = await asyncio.open_connection(host, port)
-        await self._check_zero_limits()
 
     def connected(self):
         """Returns True if client is connected"""
@@ -38,17 +36,6 @@ class AsyncioClient:
         await self._writer.wait_closed()
         self._reader = None
         self._writer = None
-
-    async def _check_zero_limits(self):
-        output_report = await self.get_output()
-        for output_channel in output_report:
-            for limit in ["max_i_neg", "max_i_pos", "max_v"]:
-                if output_channel[limit] == 0.0:
-                    logging.warning(
-                        "`%s` limit is set to zero on channel %d",
-                        limit,
-                        output_channel["channel"],
-                    )
 
     async def _read_line(self):
         # read 1 line
