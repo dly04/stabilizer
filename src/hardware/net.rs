@@ -17,6 +17,7 @@ use heapless::String;
 use miniconf::{TreeDeserializeOwned, TreeSerialize};
 use miniconf_mqtt::minimq;
 use smoltcp_nal::smoltcp;
+use smoltcp_nal::smoltcp::socket::tcp::Socket as TcpSocket;
 use smoltcp_nal::embedded_nal::TcpClientStack;
 use smoltcp_nal::NetworkError;
 use smoltcp_nal::smoltcp::iface::SocketHandle;
@@ -118,6 +119,12 @@ where
         let mut processor =
             NetworkProcessor::new(stack_manager.acquire_stack(), phy);
 
+            if let Err(e) = processor.start_tcp_server(5678) {
+            log::warn!("Failed to start TCP server: {:?}", e);
+            } else {
+                log::info!("TCP server initialized successfully on port 5678");
+            }
+
         let prefix = cortex_m::singleton!(: String<128> = get_device_prefix(app, &net_settings.id)).unwrap();
 
         let store =
@@ -154,10 +161,6 @@ where
                 .client_id(&get_client_id(&net_settings.id, "tlm"))
                 .unwrap(),
         );
-
-        processor.start_tcp_server(5678);
-        // processor.connect_to_host([192, 168, 1, 162], 8080);
-        processor.log_tcp_connections();
 
         let telemetry = TelemetryClient::new(mqtt, prefix, metadata);
 
@@ -265,6 +268,10 @@ pub struct NetworkProcessor {
     stack: NetworkReference,
     phy: EthernetPhy,
     network_was_reset: bool,
+
+    // tcp server part
+    tcp_port: u16,
+    tcp_server_initialized: bool,
 }
 
 impl NetworkProcessor {
@@ -281,78 +288,97 @@ impl NetworkProcessor {
             stack,
             phy,
             network_was_reset: false,
+
+            // tcp server part
+            tcp_port: 0,
+            tcp_server_initialized: false,
         }
     }
 
-    // pub fn connect_to_host(&mut self, host_ip: [u8; 4], host_port: u16) {
-    //     let _ = self.stack.lock(|stack| {
-    //         // 尝试获取套接字，失败就返回
-    //         let Ok(mut socket) = stack.socket() else {
-    //             log::warn!("No socket available");
-    //             return;
-    //         };
-            
-    //         let addr = core::net::SocketAddr::new(
-    //             core::net::IpAddr::V4(core::net::Ipv4Addr::new(
-    //                 host_ip[0], host_ip[1], host_ip[2], host_ip[3]
-    //             )),
-    //             host_port
-    //         );
-            
-    //         // 尝试连接，忽略所有错误
-    //         let _ = stack.connect(&mut socket, addr);
-            
-    //         log::info!("Attempted connection to {}.{}.{}.{}:{}", 
-    //                   host_ip[0], host_ip[1], host_ip[2], host_ip[3], host_port);
-    //     });
-    // }
-
     pub fn start_tcp_server(&mut self, port: u16) -> Result<(), ()> {
-        self.stack.lock(|stack| {
+        if self.tcp_server_initialized {
+            return Ok(());
+        }
+        
+        let result = self.stack.lock(|stack| {
             for (handle, socket) in stack.sockets.iter_mut() {
                 if let smoltcp::socket::Socket::Tcp(tcp_socket) = socket {
                     if !tcp_socket.is_active() && !tcp_socket.is_listening() {
                         if tcp_socket.listen(port).is_ok() {
-                            log::info!("TCP server started on port {}", port);
+                            log::info!("TCP server started on port {} with handle {:?}", port, handle);
+                            self.tcp_port = port;
+                            self.tcp_server_initialized = true;
                             return Ok(());
                         }
                     }
                 }
             }
             Err(())
-        })
+        });
+        
+        if result.is_ok() {
+            self.tcp_port = port;
+            self.tcp_server_initialized = true;
+        }
+        
+        result
     }
 
-    pub fn log_tcp_connections(&mut self) {
+    fn restart_tcp_server(&mut self) -> Result<(), ()> {
+        if self.tcp_server_initialized {
+            self.tcp_server_initialized = false;
+            self.start_tcp_server(self.tcp_port)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn process_tcp_sockets(&mut self) -> UpdateState {
+        let mut updated = UpdateState::NoChange;
+        
         self.stack.lock(|stack| {
-            log::info!("=== TCP Socket States ===");
+            let mut sockets = &mut stack.sockets;
             
-            let mut stats = [0, 0, 0]; // [listening, outbound, inactive]
-            
-            for (handle, socket) in stack.sockets.iter() {
-                if let smoltcp_nal::smoltcp::socket::Socket::Tcp(tcp_socket) = socket {
-                    if tcp_socket.is_listening() {
-                        stats[0] += 1;
-                        if let Some(local) = tcp_socket.local_endpoint() {
-                            log::info!("LISTENING - Port: {}, Handle: {:?}", local.port, handle);
+            for (_handle, socket) in sockets.iter_mut() {
+                if let smoltcp::socket::Socket::Tcp(tcp_socket) = socket {
+                    if tcp_socket.is_active() && !tcp_socket.is_listening() {
+                        if tcp_socket.may_recv() {
+                            let mut buffer = [0; 512];
+                            match tcp_socket.recv_slice(&mut buffer) {
+                                Ok(0) => {
+                                    log::debug!("TCP connection closed by peer");
+                                    updated = UpdateState::Updated;
+                                }
+                                Ok(len) => {
+                                    log::info!("TCP received {} bytes", len);
+                                    updated = UpdateState::Updated;
+                                }
+                                Err(_) => {
+                                }
+                            }
                         }
-                    } else if tcp_socket.is_active() {
-                        stats[1] += 1;
-                        let local_port = tcp_socket.local_endpoint().map(|ep| ep.port).unwrap_or(0);
-                        if let Some(remote) = tcp_socket.remote_endpoint() {
-                            log::info!("OUTBOUND - {} -> {}:{}", local_port, remote.addr, remote.port);
+                        
+                        if !tcp_socket.is_open() {
+                            log::debug!("TCP connection closed");
+                            updated = UpdateState::Updated;
                         }
-                    } else {
-                        stats[2] += 1;
-                        log::info!("INACTIVE - Handle: {:?}", handle);
+                    }
+                    
+                    else if !tcp_socket.is_active() && !tcp_socket.is_listening() {
+                        if self.tcp_server_initialized {
+                            if tcp_socket.listen(self.tcp_port).is_ok() {
+                                log::debug!("Re-established TCP listening on port {}", self.tcp_port);
+                                updated = UpdateState::Updated;
+                            }
+                        }
                     }
                 }
             }
-            
-            log::info!("Summary: Listen={}, Outbound={}, Inactive={}", stats[0], stats[1], stats[2]);
-            log::info!("============================");
         });
+        
+        updated
     }
+
 
     /// Handle ethernet link connection status.
     ///
@@ -367,8 +393,9 @@ impl NetworkProcessor {
             (true, true) => {
                 log::warn!("Network link UP");
                 self.network_was_reset = false;
-                self.start_tcp_server(5678);
-                // self.connect_to_host([192, 168, 1, 162], 8080);
+                if let Err(_) = self.restart_tcp_server() {
+                    log::warn!("Failed to restart TCP server");
+                }
             }
             // Only reset the network stack once per link reconnection. This prevents us from
             // sending an excessive number of DHCP requests.
@@ -390,10 +417,17 @@ impl NetworkProcessor {
     /// # Returns
     /// An update state corresponding with any changes in the underlying network.
     pub fn update(&mut self) -> UpdateState {
-        match self.stack.lock(|stack| stack.poll()) {
+        let network_updated = match self.stack.lock(|stack| stack.poll()) {
             Ok(true) => UpdateState::Updated,
             Ok(false) => UpdateState::NoChange,
             Err(_) => UpdateState::Updated,
+        };
+
+        let tcp_updated = self.process_tcp_sockets();
+
+        match (network_updated, tcp_updated) {
+            (UpdateState::Updated, _) | (_, UpdateState::Updated) => UpdateState::Updated,
+            _ => UpdateState::NoChange,
         }
     }
 }
