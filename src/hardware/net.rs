@@ -272,6 +272,7 @@ pub struct NetworkProcessor {
     // tcp server part
     tcp_port: u16,
     tcp_server_initialized: bool,
+    tcp_server_handle: Option<smoltcp::iface::SocketHandle>
 }
 
 impl NetworkProcessor {
@@ -292,6 +293,7 @@ impl NetworkProcessor {
             // tcp server part
             tcp_port: 0,
             tcp_server_initialized: false,
+            tcp_server_handle: None,
         }
     }
 
@@ -301,13 +303,14 @@ impl NetworkProcessor {
         }
         
         let result = self.stack.lock(|stack| {
-            for (handle, socket) in stack.sockets.iter_mut() {
+            for (index, (handle, socket)) in stack.sockets.iter_mut().enumerate() {
                 if let smoltcp::socket::Socket::Tcp(tcp_socket) = socket {
                     if !tcp_socket.is_active() && !tcp_socket.is_listening() {
                         if tcp_socket.listen(port).is_ok() {
-                            log::info!("TCP server started on port {} with handle {:?}", port, handle);
+                            log::info!("TCP server started on port {} with handle {:?} at index {}", port, handle, index);
                             self.tcp_port = port;
                             self.tcp_server_initialized = true;
+                            self.tcp_server_handle = Some(handle);
                             return Ok(());
                         }
                     }
@@ -333,45 +336,42 @@ impl NetworkProcessor {
         }
     }
 
-    fn process_tcp_sockets(&mut self) -> UpdateState {
+    pub fn process_tcp_sockets(&mut self) -> UpdateState {
         let mut updated = UpdateState::NoChange;
         
         self.stack.lock(|stack| {
-            let mut sockets = &mut stack.sockets;
-            
-            for (_handle, socket) in sockets.iter_mut() {
-                if let smoltcp::socket::Socket::Tcp(tcp_socket) = socket {
-                    if tcp_socket.is_active() && !tcp_socket.is_listening() {
-                        if tcp_socket.may_recv() {
-                            let mut buffer = [0; 512];
-                            match tcp_socket.recv_slice(&mut buffer) {
-                                Ok(0) => {
-                                    log::debug!("TCP connection closed by peer");
-                                    updated = UpdateState::Updated;
-                                }
-                                Ok(len) => {
-                                    log::info!("TCP received {} bytes", len);
-                                    updated = UpdateState::Updated;
-                                }
-                                Err(_) => {
-                                }
+            if let Some(server_handle) = self.tcp_server_handle {
+                let socket = stack.sockets.get_mut::<smoltcp::socket::tcp::Socket>(server_handle);
+                
+                if socket.is_active() && !socket.is_listening() {
+                    if socket.may_recv() {
+                        let mut buffer = [0; 512];
+                        match socket.recv_slice(&mut buffer) {
+                            Ok(0) => {
+                                log::debug!("TCP connection closed by peer");
+                                updated = UpdateState::Updated;
                             }
-                        }
-                        
-                        if !tcp_socket.is_open() {
-                            log::debug!("TCP connection closed");
-                            updated = UpdateState::Updated;
+                            Ok(len) => {
+                                log::info!("TCP received {} bytes", len);
+                                updated = UpdateState::Updated;
+                            }
+                            Err(_) => {
+                            }
                         }
                     }
                     
-                    // else if !tcp_socket.is_active() && !tcp_socket.is_listening() {
-                    //     if self.tcp_server_initialized {
-                    //         if tcp_socket.listen(self.tcp_port).is_ok() {
-                    //             log::debug!("Re-established TCP listening on port {}", self.tcp_port);
-                    //             updated = UpdateState::Updated;
-                    //         }
-                    //     }
-                    // }
+                    if !socket.is_open() {
+                        log::debug!("TCP connection closed");
+                        updated = UpdateState::Updated;
+                    }
+                }
+                else if !socket.is_active() && !socket.is_listening() {
+                    if self.tcp_server_initialized {
+                        if socket.listen(self.tcp_port).is_ok() {
+                            log::debug!("Re-established TCP listening on port {}", self.tcp_port);
+                            updated = UpdateState::Updated;
+                        }
+                    }
                 }
             }
         });
