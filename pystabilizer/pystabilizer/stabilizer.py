@@ -43,9 +43,7 @@ class Stabilizer(QObject, metaclass=PropertyMeta):
     async def run(self):
         self._update_params_task = asyncio.create_task(self.update_params())
         while True:
-            print("running run task")
             if self._update_params_task.done():
-                print("run task finished once")
                 try:
                     self._update_params_task.result()
                 except OSError:

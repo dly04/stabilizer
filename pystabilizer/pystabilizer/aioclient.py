@@ -39,24 +39,18 @@ class AsyncioClient:
 
     async def _read_line(self):
         # read 1 line
-        print("line 42")
         async with self._read_lock:
-            print("line 44")
             chunk = await self._reader.readline()
-        print("line 46")
         return chunk.decode("utf-8", errors="ignore")
 
     async def _read_write(self, command):
         self._writer.write(((" ".join(command)).strip() + "\n").encode("utf-8"))
         await self._writer.drain()
 
-        print("waiting for response")
         return await self._read_line()
 
     async def _command(self, *command):
-        print ("starting to send command \n")
         line = await self._read_write(command)
-        print ("command sent\n")
 
         print(f"Received raw line: {repr(line)}")
 

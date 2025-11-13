@@ -9,3 +9,7 @@ pub mod hardware;
 pub mod telemetry;
 
 pub mod convert;
+
+pub mod session;
+
+pub mod command_parser;

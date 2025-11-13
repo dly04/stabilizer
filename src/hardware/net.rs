@@ -22,6 +22,9 @@ use smoltcp_nal::embedded_nal::TcpClientStack;
 use smoltcp_nal::NetworkError;
 use smoltcp_nal::smoltcp::iface::SocketHandle;
 
+use crate::session::{Session, SessionInput};
+use crate::command_parser::Command;
+
 pub type EthernetPhy = ethernet::phy::LAN8742A<ethernet::EthernetMAC>;
 
 pub type NetworkReference =
@@ -272,7 +275,8 @@ pub struct NetworkProcessor {
     // tcp server part
     tcp_port: u16,
     tcp_server_initialized: bool,
-    tcp_server_handle: Option<smoltcp::iface::SocketHandle>
+    tcp_server_handle: Option<smoltcp::iface::SocketHandle>,
+    tcp_session: Session
 }
 
 impl NetworkProcessor {
@@ -294,6 +298,7 @@ impl NetworkProcessor {
             tcp_port: 0,
             tcp_server_initialized: false,
             tcp_server_handle: None,
+            tcp_session: Session::new(),
         }
     }
 
@@ -349,6 +354,7 @@ impl NetworkProcessor {
                         match socket.recv_slice(&mut buffer) {
                             Ok(0) => {
                                 log::debug!("TCP connection closed by peer");
+                                self.tcp_session.reset();
                                 updated = UpdateState::Updated;
                             }
                             Ok(len) => {
@@ -361,9 +367,36 @@ impl NetworkProcessor {
                                         log::warn!("message contains invalid UTF-8: {}", e);
                                     }
                                 }
-                                let _ = socket.send_slice(b"[1, 2, 3, 4, 5]\n");
-                                log::info!("response sent");
-                                updated = UpdateState::Updated;
+                                
+                                let (bytes_processed, session_input) = self.tcp_session.feed(&buffer[..len]);
+                                
+                                match session_input {
+                                    SessionInput::Nothing => {
+                                        log::debug!("Incomplete command, waiting for more data...");
+                                    }
+                                    SessionInput::Command(command) => {
+                                        log::info!("Received command: {:?}", command);
+                                        
+                                        match command {
+                                            Command::Quit => {
+                                                let response = b"[1, 2, 3, 4, 5]\n";
+                                                let _ = socket.send_slice(response);
+                                                log::info!("Report response sent");
+                                            }
+                                            _ => {
+                                                let response = b"{\"error\": \"unknown command\"}\n";
+                                                let _ = socket.send_slice(response);
+                                            }
+                                        }
+                                        updated = UpdateState::Updated;
+                                    }
+                                    SessionInput::Error(parser_error) => {
+                                        log::warn!("Command parsing error: {:?}", parser_error);
+                                        let response = b"{\"error\": \"invalid command format\"}\n";
+                                        let _ = socket.send_slice(response);
+                                        updated = UpdateState::Updated;
+                                    }
+                                }
                             }
                             Err(_) => {
                             }
@@ -375,14 +408,14 @@ impl NetworkProcessor {
                         updated = UpdateState::Updated;
                     }
                 }
-                else if !socket.is_active() && !socket.is_listening() {
-                    if self.tcp_server_initialized {
-                        if socket.listen(self.tcp_port).is_ok() {
-                            log::debug!("Re-established TCP listening on port {}", self.tcp_port);
-                            updated = UpdateState::Updated;
-                        }
-                    }
-                }
+                // else if !socket.is_active() && !socket.is_listening() {
+                //     if self.tcp_server_initialized {
+                //         if socket.listen(self.tcp_port).is_ok() {
+                //             log::debug!("Re-established TCP listening on port {}", self.tcp_port);
+                //             updated = UpdateState::Updated;
+                //         }
+                //     }
+                // }
             }
         });
         
@@ -434,7 +467,6 @@ impl NetworkProcessor {
         };
 
         let tcp_updated = self.process_tcp_sockets();
-        // let tcp_updated = UpdateState::NoChange;
 
         match (network_updated, tcp_updated) {
             (UpdateState::Updated, _) | (_, UpdateState::Updated) => UpdateState::Updated,
@@ -443,28 +475,3 @@ impl NetworkProcessor {
     }
 }
 
-/*
-python3 -c "
-import socket, time
-s = socket.socket()
-s.bind(('0.0.0.0', 8080))
-s.listen(1)
-print('🚀 TCP Server started on port 8080')
-print('📡 Waiting for device connection...')
-client, addr = s.accept()
-print(f'✅ Device connected: {addr}')
-client.send(b'Welcome from host!\\n')
-while True:
-    try:
-        data = client.recv(1024)
-        if data:
-            print('Received:', data.decode().strip())
-            client.send(b'Echo: ' + data)
-        else:
-            break
-    except:
-        break
-print('❌ Connection closed')
-client.close()
-"
-*/
