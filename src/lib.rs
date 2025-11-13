@@ -13,3 +13,5 @@ pub mod convert;
 pub mod session;
 
 pub mod command_parser;
+
+pub mod command_handler;

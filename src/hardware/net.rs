@@ -378,11 +378,11 @@ impl NetworkProcessor {
                                         log::info!("Received command: {:?}", command);
                                         
                                         match command {
-                                            Command::Quit => {
-                                                let response = b"[1, 2, 3, 4, 5]\n";
-                                                let _ = socket.send_slice(response);
-                                                log::info!("Report response sent");
-                                            }
+                                            // Command::Quit => {
+                                            //     let response = b"[1, 2, 3, 4, 5]\n";
+                                            //     let _ = socket.send_slice(response);
+                                            //     log::info!("Report response sent");
+                                            // }
                                             _ => {
                                                 let response = b"{\"error\": \"unknown command\"}\n";
                                                 let _ = socket.send_slice(response);
