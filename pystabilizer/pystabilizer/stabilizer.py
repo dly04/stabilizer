@@ -13,7 +13,7 @@ class StabilizerConnectionState(Enum):
 
 class Stabilizer(QObject, metaclass=PropertyMeta):
     connection_state = Property(StabilizerConnectionState)
-    report = Property(list)
+    report = Property(str)
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -27,33 +27,43 @@ class Stabilizer(QObject, metaclass=PropertyMeta):
 
     @asyncSlot()
     async def end_session(self):
-        print("closing")
+        self.stop_watching()
         await self._client.disconnect()
-        print("closed")
 
     def start_watching(self):
         self._watch_task = asyncio.create_task(self.run())
     
+    def stop_watching(self):
+        if self._watch_task is not None:
+            self._watch_task.cancel()
+            self._watch_task = None
+            self._update_params_task.cancel()
+            self._update_params_task = None
+    
     async def run(self):
-        # self._update_params_task = asyncio.create_task(self.update_params())
+        self._update_params_task = asyncio.create_task(self.update_params())
         while True:
-            # if self._update_params_task.done():
-            #     try:
-            #         self._update_params_task.result()
-            #     except OSError:
-            #         logging.error(
-            #             "Encountered an error while polling for information from Thermostat.",
-            #             exc_info=True,
-            #         )
-            #         await self.end_session()
-            #         self.connection_state = StabilizerConnectionState.DISCONNECTED
-            #         return
-            #     self._update_params_task = asyncio.create_task(self.update_params())
+            print("running run task")
+            if self._update_params_task.done():
+                print("run task finished once")
+                try:
+                    self._update_params_task.result()
+                except OSError:
+                    logging.error(
+                        "Encountered an error while polling for information from Thermostat.",
+                        exc_info=True,
+                    )
+                    await self.end_session()
+                    self.connection_state = StabilizerConnectionState.DISCONNECTED
+                    return
+                self._update_params_task = asyncio.create_task(self.update_params())
             await asyncio.sleep(1)
     
-    # async def update_params(self):
-    #     (
-    #         self.report,
-    #     ) = await asyncio.gather(
-    #         self._client.get_report(),
-    #     )
+    async def update_params(self):
+        print("start updating params")
+        (
+            self.report,
+        ) = await asyncio.gather(
+            self._client.get_report(),
+        )
+        print("finished updating params")

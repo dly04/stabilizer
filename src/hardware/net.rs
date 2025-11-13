@@ -353,6 +353,16 @@ impl NetworkProcessor {
                             }
                             Ok(len) => {
                                 log::info!("TCP received {} bytes", len);
+                                match core::str::from_utf8(&buffer[..len]) {
+                                    Ok(text) => {
+                                        log::info!("message as string: {}", text);
+                                    }
+                                    Err(e) => {
+                                        log::warn!("message contains invalid UTF-8: {}", e);
+                                    }
+                                }
+                                let _ = socket.send_slice(b"[1, 2, 3, 4, 5]\n");
+                                log::info!("response sent");
                                 updated = UpdateState::Updated;
                             }
                             Err(_) => {
