@@ -13,7 +13,7 @@ class StabilizerConnectionState(Enum):
 
 class Stabilizer(QObject, metaclass=PropertyMeta):
     connection_state = Property(StabilizerConnectionState)
-    report = Property(str)
+    report = Property(list)
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -47,19 +47,7 @@ class Stabilizer(QObject, metaclass=PropertyMeta):
                 try:
                     self._update_params_task.result()
                     if hasattr(self, 'report') and self.report is not None:
-                        print(f"=== Report in run() - Type: {type(self.report).__name__} ===")
-                        
-                        if isinstance(self.report, dict):
-                            print("It's a dictionary! Printing content:")
-                            print(json.dumps(self.report, indent=2))
-                        elif isinstance(self.report, list):
-                            print("It's still a list! Length:", len(self.report))
-                            print(json.dumps(self.report, indent=2))
-                        else:
-                            print(f"Unexpected type: {type(self.report)}")
-                            print("Content:", repr(self.report))
-                            
-                        print("======================================")
+                            print(self.report)
                     else:
                         print("No report data available")
                 except OSError:

@@ -52,7 +52,7 @@ class AsyncioClient:
     async def _command(self, *command):
         line = await self._read_write(command)
 
-        print(f"Raw string response: '{line}'")
+        # print(f"Raw string response: '{line}'")
 
         response = json.loads(line)
         if "error" in response:
@@ -133,19 +133,10 @@ class AsyncioClient:
     async def get_report(self):
         """Obtain one-time report on measurement values"""
         raw_response = await self._command("report")
-        print(f"get_report raw response: '{raw_response}'")
         
         parsed = json.loads(raw_response)
-        print(f"Parsed type: {type(parsed)}")
-        print(f"Parsed content: {parsed}")
-        
-        if isinstance(parsed, list) and len(parsed) > 0:
-            result = parsed[0]
-            print(f"Returning first element: {result}")
-            return result
-        else:
-            print(f"Returning as-is: {parsed}")
-            return parsed
+
+        return parsed
 
     async def get_ipv4(self):
         """Get the IPv4 settings of the Thermostat"""
