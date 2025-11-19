@@ -23,7 +23,7 @@ pub struct TelemetryBuffer {
 /// # Note
 /// This structure should be generated on-demand by the buffer when required to minimize conversion
 /// overhead.
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct Telemetry {
     /// Most recent input voltage measurement.
     pub adcs: [f32; 2],
@@ -39,6 +39,18 @@ pub struct Telemetry {
 
     /// Measurements related to Pounder
     pub pounder: Option<PounderTelemetry>,
+}
+
+impl Default for Telemetry {
+    fn default() -> Self {
+        Self {
+            adcs: [0.0, 0.0],
+            dacs: [0.0, 0.0],
+            digital_inputs: [false, false],
+            cpu_temp: 0.0,
+            pounder: None,
+        }
+    }
 }
 
 /// The structure that holds the telemetry related to Pounder.

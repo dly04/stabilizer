@@ -52,11 +52,11 @@ class AsyncioClient:
     async def _command(self, *command):
         line = await self._read_write(command)
 
-        print(f"Received raw line: {repr(line)}")
+        print(f"Raw string response: '{line}'")
 
-        # response = json.loads(line)
-        # if "error" in response:
-        #     raise CommandError(response["error"])
+        response = json.loads(line)
+        if "error" in response:
+            raise CommandError(response["error"])
         return line
 
     async def _get_conf(self, topic):
@@ -131,25 +131,21 @@ class AsyncioClient:
         return await self._get_conf("postfilter")
 
     async def get_report(self):
-        """Obtain one-time report on measurement values
-
-        Example of yielded data:
-            {'channel': 0,
-             'time': 2302524,
-             'interval': 0.12
-             'adc': 0.6199188965423515,
-             'sens': 6138.519310282602,
-             'temperature': 36.87032392655527,
-             'pid_engaged': True,
-             'i_set': 2.0635816680889123,
-             'dac_value': 2.527790834044456,
-             'dac_feedback': 2.523,
-             'i_tec': 2.331,
-             'tec_i': 2.0925,
-             'tec_u_meas': 2.5340000000000003,
-             'pid_output': 2.067581958092247}
-        """
-        return await self._command("report")
+        """Obtain one-time report on measurement values"""
+        raw_response = await self._command("report")
+        print(f"get_report raw response: '{raw_response}'")
+        
+        parsed = json.loads(raw_response)
+        print(f"Parsed type: {type(parsed)}")
+        print(f"Parsed content: {parsed}")
+        
+        if isinstance(parsed, list) and len(parsed) > 0:
+            result = parsed[0]
+            print(f"Returning first element: {result}")
+            return result
+        else:
+            print(f"Returning as-is: {parsed}")
+            return parsed
 
     async def get_ipv4(self):
         """Get the IPv4 settings of the Thermostat"""

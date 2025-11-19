@@ -1546,6 +1546,7 @@ dependencies = [
  "rtt-logger",
  "rtt-target",
  "serde",
+ "serde-json-core",
  "serde_json",
  "serial_settings",
  "shared-bus",

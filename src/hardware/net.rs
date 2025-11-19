@@ -11,6 +11,9 @@ use miniconf;
 use crate::hardware::{SystemTimer, hal::ethernet};
 use platform::{ApplicationMetadata, NetSettings, TelemetryClient};
 use stream::{DataStream, FrameGenerator, Target};
+use crate::telemetry;
+use crate::command_parser::ShowCommand;
+use crate::command_handler::Handler;
 
 use core::fmt::Write;
 use heapless::String;
@@ -276,7 +279,9 @@ pub struct NetworkProcessor {
     tcp_port: u16,
     tcp_server_initialized: bool,
     tcp_server_handle: Option<smoltcp::iface::SocketHandle>,
-    tcp_session: Session
+    tcp_session: Session,
+    // share finalized telemetry with tcp server
+    pub finalized_telemetry: telemetry::Telemetry,
 }
 
 impl NetworkProcessor {
@@ -299,6 +304,7 @@ impl NetworkProcessor {
             tcp_server_initialized: false,
             tcp_server_handle: None,
             tcp_session: Session::new(),
+            finalized_telemetry: telemetry::Telemetry::default(),
         }
     }
 
@@ -375,20 +381,17 @@ impl NetworkProcessor {
                                         log::debug!("Incomplete command, waiting for more data...");
                                     }
                                     SessionInput::Command(command) => {
-                                        log::info!("Received command: {:?}", command);
-                                        
-                                        match command {
-                                            // Command::Quit => {
-                                            //     let response = b"[1, 2, 3, 4, 5]\n";
-                                            //     let _ = socket.send_slice(response);
-                                            //     log::info!("Report response sent");
-                                            // }
-                                            _ => {
-                                                let response = b"{\"error\": \"unknown command\"}\n";
-                                                let _ = socket.send_slice(response);
-                                            }
+                                        match Handler::handle_command(
+                                            command,
+                                            socket,
+                                            self.finalized_telemetry.clone(),
+                                        ) {
+                                            Ok(Handler::NewIPV4(ip)) => {},
+                                            Ok(Handler::Handled) => {}
+                                            Ok(Handler::CloseSocket) => socket.close(),
+                                            Ok(Handler::Reset) => {},
+                                            Err(_) => {}
                                         }
-                                        updated = UpdateState::Updated;
                                     }
                                     SessionInput::Error(parser_error) => {
                                         log::warn!("Command parsing error: {:?}", parser_error);

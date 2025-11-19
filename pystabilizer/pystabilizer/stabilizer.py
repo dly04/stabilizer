@@ -46,6 +46,22 @@ class Stabilizer(QObject, metaclass=PropertyMeta):
             if self._update_params_task.done():
                 try:
                     self._update_params_task.result()
+                    if hasattr(self, 'report') and self.report is not None:
+                        print(f"=== Report in run() - Type: {type(self.report).__name__} ===")
+                        
+                        if isinstance(self.report, dict):
+                            print("It's a dictionary! Printing content:")
+                            print(json.dumps(self.report, indent=2))
+                        elif isinstance(self.report, list):
+                            print("It's still a list! Length:", len(self.report))
+                            print(json.dumps(self.report, indent=2))
+                        else:
+                            print(f"Unexpected type: {type(self.report)}")
+                            print("Content:", repr(self.report))
+                            
+                        print("======================================")
+                    else:
+                        print("No report data available")
                 except OSError:
                     logging.error(
                         "Encountered an error while polling for information from Thermostat.",

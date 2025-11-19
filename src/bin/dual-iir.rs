@@ -32,6 +32,8 @@ use miniconf::Tree;
 
 use idsp::iir;
 
+use core::sync::atomic::{AtomicU32, Ordering};
+
 use platform::{AppSettings, NetSettings};
 use serde::{Deserialize, Serialize};
 use signal_generator::{self, Source};
@@ -377,6 +379,9 @@ mod app {
         priority=3)]
     #[unsafe(link_section = ".itcm.process")]
     fn process(c: process::Context) {
+
+        static PROCESS_RUN_COUNT: AtomicU32 = AtomicU32::new(0);
+
         let process::SharedResources {
             active, telemetry, ..
         } = c.shared;
@@ -389,6 +394,11 @@ mod app {
             source,
             ..
         } = c.local;
+
+        let count = PROCESS_RUN_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        if count % 100000 == 0 {
+            // log::info!("Process task has run {} times", count);
+        }
 
         (active, telemetry).lock(|active, telemetry| {
             (adc0, adc1, dac0, dac1).lock(|adc0, adc1, dac0, dac1| {
@@ -540,33 +550,43 @@ mod app {
 
     #[task(priority = 1, shared=[network, settings, telemetry, pounder], local=[cpu_temp_sensor])]
     async fn telemetry(mut c: telemetry::Context) {
-        loop {
-            let telemetry =
-                c.shared.telemetry.lock(|telemetry| telemetry.clone());
 
-            let (gains, telemetry_period, pounder_config) =
-                c.shared.settings.lock(|settings| {
+        static TELEMETRY_RUN_COUNT: AtomicU32 = AtomicU32::new(0);
+
+        loop {
+
+            let count = TELEMETRY_RUN_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+            log::info!("Telemetry task has run {} times", count);
+
+            let (telemetry_data, gains, telemetry_period, pounder_config) = {
+                let telemetry_copy = c.shared.telemetry.lock(|telemetry| telemetry.clone());
+                let (gains, period, p_config) = c.shared.settings.lock(|settings| {
                     (
                         settings.dual_iir.ch.each_ref().map(|ch| ch.gain),
                         settings.dual_iir.telemetry_period,
                         settings.dual_iir.pounder,
                     )
                 });
+                (telemetry_copy, gains, period, p_config)
+            };
 
             let pounder_telemetry = c.shared.pounder.lock(|pounder| {
                 pounder.as_mut().map(|pdr| pdr.get_telemetry(pounder_config.unwrap()))
                 });
 
+            let cpu_temp = c.local.cpu_temp_sensor.get_temperature().unwrap();
+
+            let finalized_telemetry = telemetry_data.finalize(
+                gains[0],
+                gains[1],
+                cpu_temp,
+                pounder_telemetry,
+            );
+
             c.shared.network.lock(|net| {
-                net.telemetry.publish_telemetry(
-                    "/telemetry",
-                    &telemetry.finalize(
-                        gains[0],
-                        gains[1],
-                        c.local.cpu_temp_sensor.get_temperature().unwrap(),
-                        pounder_telemetry,
-                    ),
-                )
+                net.processor.finalized_telemetry = finalized_telemetry;
+            
+                net.telemetry.publish_telemetry("/telemetry", &net.processor.finalized_telemetry);
             });
 
             Systick::delay(((telemetry_period * 1000.0) as u32).millis()).await;

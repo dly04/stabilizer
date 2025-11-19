@@ -5,6 +5,9 @@ use crate::command_parser::Ipv4Config;
 use heapless::Vec;
 use crate::command_parser::Command;
 use crate::command_parser::ShowCommand;
+use crate::telemetry;
+use serde::{Serialize, Serializer};
+use serde_json_core;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Handler {
@@ -48,60 +51,27 @@ fn send_line(socket: &mut TcpSocket, data: &[u8]) -> bool {
     false
 }
 
+pub fn reports_json(telemetry: & telemetry::Telemetry) -> Result<JsonBuffer, serde_json_core::ser::Error> {
+    let mut reports = Vec::<_, 1>::new();
+    let _ = reports.push(telemetry);
+    serde_json_core::to_vec(&reports)
+}
+
 impl Handler {
     pub fn handle_command(
         command: Command,
         socket: &mut TcpSocket,
+        telemetry: telemetry::Telemetry,
     ) -> Result<Self, Error> {
         match command {
-            // Command::Quit => {},
-            Command::Show(ShowCommand::Input) => Handler::show_report(socket, channels),
-            // Command::Show(ShowCommand::Pid) => {},
-            // Command::Show(ShowCommand::Output) => {},
-            // Command::Show(ShowCommand::BParameter) => {}
-            // Command::Show(ShowCommand::PostFilter) => {},
-            // Command::Show(ShowCommand::Ipv4) => {},
-            // Command::OutputPid { channel } => {},
-            // Command::OutputPolarity { channel, polarity } => {}
-            // Command::Output {
-            //     channel,
-            //     pin,
-            //     value,
-            // } => {}
-            // Command::Pid {
-            //     channel,
-            //     parameter,
-            //     value,
-            // } => {},
-            // Command::BParameter {
-            //     channel,
-            //     parameter,
-            //     value,
-            // } => {},
-            // Command::PostFilter {
-            //     channel,
-            //     rate: None,
-            // } => {},
-            // Command::PostFilter {
-            //     channel,
-            //     rate: Some(rate),
-            // } => {},
-            // Command::Load { channel } => {},
-            // Command::Save { channel } => {},
-            // Command::Ipv4(config) => {},
-            // Command::Reset => {},
-            // Command::Dfu => {},
-            // Command::FanSet { fan_pwm } => {},
-            // Command::ShowFan => {},
-            // Command::FanAuto => {},
-            // Command::FanCurve { k_a, k_b, k_c } => {}
-            // Command::FanCurveDefaults => {},
-            // Command::ShowHWRev => {},
+            Command::Show(ShowCommand::Input) => Handler::show_report(socket, telemetry),
+            Command::Show(ShowCommand::Ipv4) => Handler::show_ipv4(socket),
+            _ => todo!(),
         }
     }
 
-    fn show_report(socket: &mut TcpSocket, channels: &mut Channels) -> Result<Handler, Error> {
-        match channels.reports_json() {
+    fn show_report(socket: &mut TcpSocket, telemetry: telemetry::Telemetry) -> Result<Handler, Error> {
+        match reports_json(&telemetry) {
             Ok(buf) => {
                 send_line(socket, &buf[..]);
             }
@@ -111,6 +81,11 @@ impl Handler {
                 return Err(Error::Report);
             }
         }
+        Ok(Handler::Handled)
+    }
+
+    fn show_ipv4(socket: &mut TcpSocket) -> Result<Handler, Error> {
+        send_line(socket, b"IPv4: 192.168.1.100/24, GW=192.168.1.1");
         Ok(Handler::Handled)
     }
 }
