@@ -175,7 +175,7 @@ pub struct DualIir {
     trigger: bool,
     /// Telemetry output period in seconds.
     #[tree(with=miniconf::leaf)]
-    telemetry_period: f32,
+    pub telemetry_period: f32,
     /// Target IP and port for UDP streaming.
     ///
     /// Can be multicast.
@@ -189,7 +189,7 @@ pub struct DualIir {
     /// # Value
     /// See [PounderConfig#miniconf]
     #[tree]
-    pounder: Option<PounderConfig>,
+    pub pounder: Option<PounderConfig>,
 }
 
 impl Default for DualIir {
@@ -379,9 +379,6 @@ mod app {
         priority=3)]
     #[unsafe(link_section = ".itcm.process")]
     fn process(c: process::Context) {
-
-        static PROCESS_RUN_COUNT: AtomicU32 = AtomicU32::new(0);
-
         let process::SharedResources {
             active, telemetry, ..
         } = c.shared;
@@ -394,11 +391,6 @@ mod app {
             source,
             ..
         } = c.local;
-
-        let count = PROCESS_RUN_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-        if count % 100000 == 0 {
-            // log::info!("Process task has run {} times", count);
-        }
 
         (active, telemetry).lock(|active, telemetry| {
             (adc0, adc1, dac0, dac1).lock(|adc0, adc1, dac0, dac1| {
@@ -492,6 +484,10 @@ mod app {
     #[task(priority = 1, local=[afes, dds_clock_state], shared=[network, settings, active, pounder])]
     async fn settings_update(mut c: settings_update::Context) {
         c.shared.settings.lock(|settings| {
+
+            log::info!("Current telemetry period: {:?}", settings.dual_iir.telemetry_period);
+            log::info!("Pounder config: {:?}", settings.dual_iir.pounder);
+
             c.local.afes[0].set_gain(settings.dual_iir.ch[0].gain);
             c.local.afes[1].set_gain(settings.dual_iir.ch[1].gain);
 
@@ -550,14 +546,7 @@ mod app {
 
     #[task(priority = 1, shared=[network, settings, telemetry, pounder], local=[cpu_temp_sensor])]
     async fn telemetry(mut c: telemetry::Context) {
-
-        static TELEMETRY_RUN_COUNT: AtomicU32 = AtomicU32::new(0);
-
         loop {
-
-            let count = TELEMETRY_RUN_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-            log::info!("Telemetry task has run {} times", count);
-
             let (telemetry_data, gains, telemetry_period, pounder_config) = {
                 let telemetry_copy = c.shared.telemetry.lock(|telemetry| telemetry.clone());
                 let (gains, period, p_config) = c.shared.settings.lock(|settings| {

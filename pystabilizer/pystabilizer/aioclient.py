@@ -52,8 +52,6 @@ class AsyncioClient:
     async def _command(self, *command):
         line = await self._read_write(command)
 
-        # print(f"Raw string response: '{line}'")
-
         response = json.loads(line)
         if "error" in response:
             raise CommandError(response["error"])

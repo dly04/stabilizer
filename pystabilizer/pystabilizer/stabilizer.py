@@ -69,3 +69,6 @@ class Stabilizer(QObject, metaclass=PropertyMeta):
             self._client.get_report(),
         )
         print("finished updating params")
+
+    async def set_param(self, topic, channel="", field="", value=""):
+        await self._client.set_param(topic, channel, field, value)

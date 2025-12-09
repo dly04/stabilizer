@@ -140,7 +140,9 @@ pub enum Polarity {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
-    // Ipv4(Ipv4Config),
+    PounderFrequency {
+        frequency: f64,
+    },
     Show(ShowCommand),
 }
 
@@ -177,6 +179,7 @@ fn channel(input: &[u8]) -> IResult<&[u8], usize> {
 }
 
 fn report(input: &[u8]) -> IResult<&[u8], Command> {
+    info!("here, report!");
     preceded(
         tag("report"),
         // `report` - Report once
@@ -197,16 +200,29 @@ fn ipv4_addr(input: &[u8]) -> IResult<&[u8], Result<[u8; 4], Error>> {
 }
 
 fn ipv4(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
-    // Dummy 实现：总是返回显示 IPv4 命令
+    info!("here, ipv4!");
     let command = Ok(Command::Show(ShowCommand::Ipv4));
     Ok((input, command))
 }
 
 fn command(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
     alt((
-        map(report, Ok),
+        pounder_frequency,
         ipv4,
+        map(report, Ok),
     ))(input)
+}
+
+fn pounder_frequency(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
+    info!("here, pounder_frequency!");
+    let (input, _) = tag("pounder_frequency")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, value) = float(input)?;
+    let result = value.map(|freq| {
+        Command::PounderFrequency { frequency: freq }
+    });
+
+    Ok((input, result))
 }
 
 impl Command {
