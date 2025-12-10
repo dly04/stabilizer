@@ -66,6 +66,7 @@ impl Handler {
         match command {
             Command::Show(ShowCommand::Input) => Handler::show_report(socket, telemetry),
             Command::Show(ShowCommand::Ipv4) => Handler::show_ipv4(socket),
+            Command::PounderFrequency { frequency } => Handler::change_pounder_frequency(socket, frequency),
             _ => todo!(),
         }
     }
@@ -86,6 +87,11 @@ impl Handler {
 
     fn show_ipv4(socket: &mut TcpSocket) -> Result<Handler, Error> {
         send_line(socket, b"IPv4: 192.168.1.100/24, GW=192.168.1.1");
+        Ok(Handler::Handled)
+    }
+
+    fn change_pounder_frequency(socket: &mut TcpSocket, frequency: u32) -> Result<Handler, Error> {
+        send_line(socket, b"{}");
         Ok(Handler::Handled)
     }
 }

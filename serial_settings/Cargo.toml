@@ -17,7 +17,6 @@ keywords = ["serial", "settings", "cli", "management", "async"]
 maintenance = { status = "actively-developed" }
 
 [dependencies]
-miniconf = { version = "0.20", features = ["json-core", "postcard"] }
 menu = { version = "0.6.1", features = ["echo"] }
 heapless = "0.8"
 embedded-io = "0.6"
@@ -27,3 +26,7 @@ log = { version = "0.4", features = [
 	"max_level_trace",
 	"release_max_level_info",
 ] }
+
+[dependencies.miniconf]
+features = ["json-core", "postcard"]
+path = "/home/dly/miniconf/miniconf"

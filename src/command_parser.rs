@@ -141,7 +141,7 @@ pub enum Polarity {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     PounderFrequency {
-        frequency: f64,
+        frequency: u32,
     },
     Show(ShowCommand),
 }
@@ -180,11 +180,9 @@ fn channel(input: &[u8]) -> IResult<&[u8], usize> {
 
 fn report(input: &[u8]) -> IResult<&[u8], Command> {
     info!("here, report!");
-    preceded(
-        tag("report"),
-        // `report` - Report once
-        value(Command::Show(ShowCommand::Input), end),
-    )(input)
+    let (input, _) = tag("report")(input)?;
+    let (input, _) = end(input)?;
+    Ok((input, Command::Show(ShowCommand::Input)))
 }
 
 fn ipv4_addr(input: &[u8]) -> IResult<&[u8], Result<[u8; 4], Error>> {
@@ -208,16 +206,14 @@ fn ipv4(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
 fn command(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
     alt((
         pounder_frequency,
-        ipv4,
         map(report, Ok),
     ))(input)
 }
 
 fn pounder_frequency(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
-    info!("here, pounder_frequency!");
-    let (input, _) = tag("pounder_frequency")(input)?;
+    let (input, temp) = tag("pounder_frequency")(input)?;
     let (input, _) = whitespace(input)?;
-    let (input, value) = float(input)?;
+    let (input, value) = unsigned(input)?;
     let result = value.map(|freq| {
         Command::PounderFrequency { frequency: freq }
     });

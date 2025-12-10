@@ -10,7 +10,6 @@ categories = ["embedded", "no-std"]
 keywords = []
 
 [dependencies]
-miniconf = { version = "0.20", features = ["derive", "heapless", "postcard"] }
 serde = { version = "1.0", features = ["derive"], default-features = false }
 heapless = { version = "0.8", features = ["serde"] }
 log = { version = "0.4" }
@@ -32,3 +31,7 @@ embedded-hal-02 = { package = "embedded-hal", version = "0.2.7", features = [
 version = "0.6"
 features = ["shared-stack"]
 path = "/home/dly/smoltcp-nal"
+
+[dependencies.miniconf]
+features = ["derive", "heapless", "postcard"]
+path = "/home/dly/miniconf/miniconf"
