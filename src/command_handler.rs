@@ -9,9 +9,13 @@ use crate::telemetry;
 use serde::{Serialize, Serializer};
 use serde_json_core;
 
+use crate::dual_iir_lib::DualIir;
+use miniconf::Leaf;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Handler {
     Handled,
+    SettingsChanged,
     CloseSocket,
     NewIPV4(Ipv4Config),
     Reset,
@@ -62,11 +66,12 @@ impl Handler {
         command: Command,
         socket: &mut TcpSocket,
         telemetry: telemetry::Telemetry,
+        settings: &mut DualIir,
     ) -> Result<Self, Error> {
         match command {
             Command::Show(ShowCommand::Input) => Handler::show_report(socket, telemetry),
             Command::Show(ShowCommand::Ipv4) => Handler::show_ipv4(socket),
-            Command::PounderFrequency { frequency } => Handler::change_pounder_frequency(socket, frequency),
+            Command::PounderFrequency { frequency } => Handler::change_pounder_frequency(socket, frequency, settings),
             _ => todo!(),
         }
     }
@@ -90,8 +95,14 @@ impl Handler {
         Ok(Handler::Handled)
     }
 
-    fn change_pounder_frequency(socket: &mut TcpSocket, frequency: u32) -> Result<Handler, Error> {
+    fn change_pounder_frequency(socket: &mut TcpSocket, frequency: u32, settings: &mut DualIir) -> Result<Handler, Error> {
+        if let Some(pounder) = &mut settings.pounder {
+        pounder.out_channel[0].dds.frequency = Leaf(frequency as f32);
+        send_line(socket, b"{}");
+        Ok(Handler::SettingsChanged)
+    } else {
         send_line(socket, b"{}");
         Ok(Handler::Handled)
+    }
     }
 }

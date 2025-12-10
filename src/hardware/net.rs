@@ -27,6 +27,7 @@ use smoltcp_nal::smoltcp::iface::SocketHandle;
 
 use crate::session::{Session, SessionInput};
 use crate::command_parser::Command;
+use crate::dual_iir_lib::DualIir;
 
 pub type EthernetPhy = ethernet::phy::LAN8742A<ethernet::EthernetMAC>;
 
@@ -66,6 +67,7 @@ impl Default for MqttStorage {
 }
 
 pub enum UpdateState {
+    SettingsChanged,
     NoChange,
     Updated,
 }
@@ -222,6 +224,7 @@ where
         let poll_result = match self.processor.update() {
             UpdateState::NoChange => NetworkState::NoChange,
             UpdateState::Updated => NetworkState::Updated,
+            UpdateState::SettingsChanged => NetworkState::SettingsChanged,
         };
 
         let res = self.miniconf.update(settings);
@@ -229,6 +232,25 @@ where
             Ok(true) => NetworkState::SettingsChanged,
             _ => poll_result,
         }
+    }
+
+    pub fn update_dual_iir(&mut self, settings: &mut DualIir) -> NetworkState {
+        // Update the MQTT clients.
+        self.telemetry.update();
+
+        // Update the data stream.
+        if self.generator.is_none() {
+            self.stream.process();
+        }
+
+        // Poll for incoming data.
+        let poll_result = match self.processor.update_dual_iir(settings) {
+            UpdateState::NoChange => NetworkState::NoChange,
+            UpdateState::Updated => NetworkState::Updated,
+            UpdateState::SettingsChanged => NetworkState::SettingsChanged,
+        };
+
+        poll_result
     }
 }
 
@@ -347,7 +369,7 @@ impl NetworkProcessor {
         }
     }
 
-    pub fn process_tcp_sockets(&mut self) -> UpdateState {
+    pub fn process_tcp_sockets(&mut self, settings: &mut DualIir) -> UpdateState {
         let mut updated = UpdateState::NoChange;
         
         self.stack.lock(|stack| {
@@ -385,9 +407,11 @@ impl NetworkProcessor {
                                             command,
                                             socket,
                                             self.finalized_telemetry.clone(),
+                                            settings
                                         ) {
                                             Ok(Handler::NewIPV4(ip)) => {},
                                             Ok(Handler::Handled) => {}
+                                            Ok(Handler::SettingsChanged) => { updated = UpdateState::SettingsChanged }
                                             Ok(Handler::CloseSocket) => socket.close(),
                                             Ok(Handler::Reset) => {},
                                             Err(_) => {}
@@ -469,9 +493,20 @@ impl NetworkProcessor {
             Err(_) => UpdateState::Updated,
         };
 
-        let tcp_updated = self.process_tcp_sockets();
+        network_updated
+    }
+    
+    pub fn update_dual_iir(&mut self, settings: &mut DualIir) -> UpdateState {
+        let network_updated = match self.stack.lock(|stack| stack.poll()) {
+            Ok(true) => UpdateState::Updated,
+            Ok(false) => UpdateState::NoChange,
+            Err(_) => UpdateState::Updated,
+        };
+
+        let tcp_updated = self.process_tcp_sockets(settings);
 
         match (network_updated, tcp_updated) {
+            (UpdateState::SettingsChanged, _) | (_, UpdateState::SettingsChanged) => UpdateState::SettingsChanged,
             (UpdateState::Updated, _) | (_, UpdateState::Updated) => UpdateState::Updated,
             _ => UpdateState::NoChange,
         }

@@ -15,3 +15,5 @@ pub mod session;
 pub mod command_parser;
 
 pub mod command_handler;
+
+pub mod dual_iir_lib;
