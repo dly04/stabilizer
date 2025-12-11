@@ -321,8 +321,7 @@ mod app {
     async fn settings_update(mut c: settings_update::Context) {
         c.shared.settings.lock(|settings| {
 
-            log::info!("Current telemetry period: {:?}", settings.dual_iir.telemetry_period);
-            log::info!("Pounder config: {:?}", settings.dual_iir.pounder);
+            log::info!("Current dual iir config: {:?}", settings.dual_iir);
 
             c.local.afes[0].set_gain(settings.dual_iir.ch[0].gain);
             c.local.afes[1].set_gain(settings.dual_iir.ch[1].gain);
@@ -414,7 +413,7 @@ mod app {
                 net.telemetry.publish_telemetry("/telemetry", &net.processor.finalized_telemetry);
             });
 
-            Systick::delay(((telemetry_period * 1000.0) as u32).millis()).await;
+            Systick::delay(((1.0 * 1000.0) as u32).millis()).await;
         }
     }
 

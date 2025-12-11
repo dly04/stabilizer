@@ -98,6 +98,8 @@ impl Handler {
     fn change_pounder_frequency(socket: &mut TcpSocket, frequency: u32, settings: &mut DualIir) -> Result<Handler, Error> {
         if let Some(pounder) = &mut settings.pounder {
         pounder.out_channel[0].dds.frequency = Leaf(frequency as f32);
+        pounder.out_channel[0].dds.amplitude = Leaf(1.0);
+        pounder.out_channel[0].attenuation = Leaf(16.0);
         send_line(socket, b"{}");
         Ok(Handler::SettingsChanged)
     } else {

@@ -15,6 +15,8 @@ use crate::{
     }
 };
 
+use core::fmt;
+
 // The number of cascaded IIR biquads per channel. Select 1 or 2!
 pub const IIR_CASCADE_LENGTH: usize = 1;
 
@@ -136,7 +138,7 @@ impl Channel {
     }
 }
 
-#[derive(Clone, Debug, Tree)]
+#[derive(Clone, Tree)]
 #[tree(meta(doc, typename))]
 pub struct DualIir {
     /// Channel configuration
@@ -161,6 +163,18 @@ pub struct DualIir {
     /// See [PounderConfig#miniconf]
     #[tree]
     pub pounder: Option<PounderConfig>,
+}
+
+impl fmt::Debug for DualIir {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DualIir")
+            // .field("ch", &self.ch)
+            // .field("trigger", &self.trigger)
+            // .field("telemetry_period", &self.telemetry_period)
+            .field("stream", &self.stream)
+            .field("pounder", &self.pounder)
+            .finish()
+    }
 }
 
 impl Default for DualIir {
