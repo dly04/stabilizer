@@ -1,3 +1,144 @@
+// DualIir (dual-iir)
+// ├── ch[0]
+// │   ├── gain: convert::Gain (enum)
+// │   ├── biquad[0]
+// │   │   ├── typ: idsp::iir::BiquadRepr (enum)
+// │   │   └── repr (idsp::iir::BiquadRepr) (enum)
+// |   |       ├── Ba (idsp::iir::repr::Ba)
+// │   │       │   ├── ba: [T[3]]2
+// │   │       │   ├── u: T
+// │   │       │   ├── min: T
+// │   │       │   └── max: T
+// │   │       ├── Raw (idsp::iir::biquad::Biquad)
+// │   │       │   ├── ba: T[5]
+// │   │       │   ├── u: T
+// │   │       │   ├── min: T
+// │   │       │   └── max: T
+// │   │       ├── Pid (idsp::iir::Pid)
+// │   │       │   ├── order: idsp::iir::pid::Order (enum)
+// │   │       │   ├── gain
+// |   |       |   |   ├── i2: T
+// │   │       │   |   ├── i: T
+// │   │       │   |   ├── p: T
+// │   │       │   |   ├── d: T
+// │   │       │   |   └── d2: T
+// │   │       │   ├── limit
+// |   |       |   |   ├── i2: T
+// │   │       │   |   ├── i: T
+// │   │       │   │   ├── p: T
+// │   │       │   |   ├── d: T
+// │   │       │   |   └── d2: T
+// │   │       │   ├── setpoint: T
+// │   │       │   ├── min: T
+// │   │       │   └── max: T
+// │   │       └── Filter (idsp::iir::repr::FilterRepr)
+// │   │           ├── typ: idsp::iir::repr::Typ (enum)
+// │   │           ├── frequency: T
+// │   │           ├── gain: T
+// │   │           ├── shelf: T
+// │   │           ├── shape (idsp::iir::coefficients::Shape) (enum)
+// │   │           │   ├── Q: T
+// │   │           │   ├── Bandwidth: T
+// │   │           │   └── Slope: T
+// │   │           ├── offset: T
+// │   │           ├── min: T
+// │   │           └── max:T
+// │   ├── run: dual-iir::Run (enum)
+// │   └── source (signal_generator::Config)
+// │       ├── signal: signal_generator::Signal (enum)
+// │       ├── frequency: f32
+// │       ├── symmetry: f32
+// │       ├── amplitude: f32
+// │       ├── offset: f32
+// │       ├── phase: f32
+// │       ├── length: u32
+// │       ├── state: i64
+// │       └── rate: i32
+// ├── ch[1] (Channel 1)
+// │   ├── gain: convert::Gain (enum)
+// │   ├── biquad[0]
+// │   │   ├── typ: idsp::iir::BiquadRepr (enum)
+// │   │   └── repr (idsp::iir::BiquadRepr) (enum)
+// |   |       ├── Ba (idsp::iir::repr::Ba)
+// │   │       │   ├── ba: [T[3]]2
+// │   │       │   ├── u: T
+// │   │       │   ├── min: T
+// │   │       │   └── max: T
+// │   │       ├── Raw (idsp::iir::biquad::Biquad)
+// │   │       │   ├── ba: T[5]
+// │   │       │   ├── u: T
+// │   │       │   ├── min: T
+// │   │       │   └── max: T
+// │   │       ├── Pid (idsp::iir::Pid)
+// │   │       │   ├── order: idsp::iir::pid::Order (enum)
+// │   │       │   ├── gain
+// |   |       |   |   ├── i2: T
+// │   │       │   |   ├── i: T
+// │   │       │   |   ├── p: T
+// │   │       │   |   ├── d: T
+// │   │       │   |   └── d2: T
+// │   │       │   ├── limit
+// |   |       |   |   ├── i2: T
+// │   │       │   |   ├── i: T
+// │   │       │   │   ├── p: T
+// │   │       │   |   ├── d: T
+// │   │       │   |   └── d2: T
+// │   │       │   ├── setpoint: T
+// │   │       │   ├── min: T
+// │   │       │   └── max: T
+// │   │       └── Filter (idsp::iir::repr::FilterRepr)
+// │   │           ├── typ: idsp::iir::repr::Typ (enum)
+// │   │           ├── frequency: T
+// │   │           ├── gain: T
+// │   │           ├── shelf: T
+// │   │           ├── shape (idsp::iir::coefficients::Shape) (enum)
+// │   │           │   ├── Q: T
+// │   │           │   ├── Bandwidth: T
+// │   │           │   └── Slope: T
+// │   │           ├── offset: T
+// │   │           ├── min: T
+// │   │           └── max:T
+// │   ├── run: dual-iir::Run (enum)
+// │   └── source (signal_generator::Config)
+// │       ├── signal: signal_generator::Signal (enum)
+// │       ├── frequency: f32
+// │       ├── symmetry: f32
+// │       ├── amplitude: f32
+// │       ├── offset: f32
+// │       ├── phase: f32
+// │       ├── length: u32
+// │       ├── state: i64
+// │       └── rate: i32
+// ├── trigger: bool
+// ├── telemetry_period: f32
+// ├── stream: stream::Target
+// │   ├── ip (IP address)
+// │   └── port (UDP port)
+// └── pounder (Optional Pounder DDS Configuration)
+//     ├── clock (DDS Clock Config)
+//     │   ├── reference (Reference frequency)
+//     │   ├── frequency (Output frequency)
+//     │   └── enabled
+//     ├── channels[0] (DDS Channel 0)
+//     │   ├── frequency (Frequency in Hz)
+//     │   ├── amplitude (Amplitude 0-1)
+//     │   ├── phase (Phase 0-2π)
+//     │   └── enabled
+//     ├── channels[1] (DDS Channel 1)
+//     │   ├── frequency
+//     │   ├── amplitude
+//     │   ├── phase
+//     │   └── enabled
+//     └── attenuator[0..3] (Attenuator Settings)
+//         └── attenuation (dB attenuation)
+
+/*
+    gain <0,1> <convert::Gain>
+    biquad <0,1> typ <...>
+
+ */
+
+
 use core::fmt;
 use core::num::ParseIntError;
 use core::str::{from_utf8, Utf8Error};
