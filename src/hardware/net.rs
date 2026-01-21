@@ -409,7 +409,6 @@ impl NetworkProcessor {
                                             self.finalized_telemetry.clone(),
                                             settings
                                         ) {
-                                            Ok(Handler::NewIPV4(ip)) => {},
                                             Ok(Handler::Handled) => {}
                                             Ok(Handler::SettingsChanged) => { updated = UpdateState::SettingsChanged }
                                             Ok(Handler::CloseSocket) => socket.close(),

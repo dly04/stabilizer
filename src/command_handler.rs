@@ -1,7 +1,6 @@
 use smoltcp_nal::smoltcp::socket::tcp::Socket as TcpSocket;
 use log::{error, warn};
 use core::fmt::Write;
-use crate::command_parser::Ipv4Config;
 use heapless::Vec;
 use crate::command_parser::Command;
 use crate::command_parser::ShowCommand;
@@ -17,7 +16,6 @@ pub enum Handler {
     Handled,
     SettingsChanged,
     CloseSocket,
-    NewIPV4(Ipv4Config),
     Reset,
 }
 
