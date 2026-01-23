@@ -468,105 +468,48 @@ fn float(input: &[u8]) -> IResult<&[u8], Result<f64, Error>> {
     Ok((input, result))
 }
 
-// #[derive(Debug, Clone, PartialEq)]
-// pub enum Command {
-//     PounderFrequency {
-//         frequency: u32,
-//     },
-//     Show(ShowCommand),
+fn channel(input: &[u8]) -> IResult<&[u8], usize> {
+    map(one_of("01"), |c| (c as usize) - ('0' as usize))(input)
+}
 
-//     Gain {
-//         channel: usize,
-//         gain: Gain
-//     },
-//     BiquadTyp {
-//         channel: usize,
-//         biquad_typ: BiquadTyp
-//     },
-//     BiquadReprBa {
-//         channel: usize,
-//         ba: [f32; 6],
-//         u: f32,
-//         min: f32,
-//         max: f32
-//     },
-//     BiquadReprRaw {
-//         channel: usize,
-//         ba: [f32; 5],
-//         u: f32,
-//         min: f32,
-//         max: f32
-//     },
-//     BiquadReprPid {
-//         channel: usize,
-//         order: Order,
-//         gain: PidParam,
-//         limit: PidParam,
-//         setpoint: f32,
-//         min: f32,
-//         max: f32
-//     },
-//     BiquadReprFilter {
-//         typ: FilterTyp,
-//         frequency: f32,
-//         gain: f32,
-//         shelf: f32,
-//         shape: FilterShape,
-//         offset: f32,
-//         min: f32,
-//         max:f32
-//     },
-//     Run {
-//         channel: usize,
-//         run: Run
-//     },
-//     Source {
-//         channel: usize,
-//         signal: Signal,
-//         frequency: f32,
-//         symmetry: f32,
-//         amplitude: f32,
-//         offset: f32,
-//         phase: f32,
-//         length: u32,
-//         state: i64,
-//         rate: i32
-//     },
-//     Trigger,
-//     TelemetryPeriod(f32),
-//     Stream(core::net::SocketAddr),
-//     PounderClock {
-//         multiplier: u8,
-//         reference_clock: u32,
-//         external_clock: bool
-//     },
-//     PounderChannel {
-//         in_out: InOut,
-//         channel: usize,
-//         dds_frequency: f32,
-//         phase_offset: f32,
-//         amplitude: f32,
-//         attenuation: f32
-//     }
+// fn output_polarity(input: &[u8]) -> IResult<&[u8], Polarity> {
+//     preceded(
+//         tag("polarity"),
+//         preceded(
+//             whitespace,
+//             alt((
+//                 value(Polarity::Normal, tag("normal")),
+//                 value(Polarity::Reversed, tag("reversed")),
+//             )),
+//         ),
+//     )(input)
 // }
+fn parse_gain(input: &[u8]) -> IResult<&[u8], Gain> {
+    alt((
+        value(Gain::G10, tag("G10")),
+        value(Gain::G1, tag("G1")),
+        value(Gain::G2, tag("G2")),
+        value(Gain::G5, tag("G5")), 
+    ))(input)
+}
 
 fn command(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
     alt((
         pounder_frequency,
         map(report, Ok),
 
-        gain,
-        biquad_ba,
-        biquad_raw,
-        biquad_pid,
-        biquad_filter,
-        run,
-        source,
-        trigger,
-        telemetry_period,
-        stream,
-        pounder_clock,
-        pounder_channel
+        // gain,
+        // biquad_ba,
+        // biquad_raw,
+        // biquad_pid,
+        // biquad_filter,
+        // run,
+        // source,
+        // trigger,
+        // telemetry_period,
+        // stream,
+        // pounder_clock,
+        // pounder_channel
     ))(input)
 }
 
@@ -589,7 +532,7 @@ fn report(input: &[u8]) -> IResult<&[u8], Command> {
 }
 
 fn pounder_frequency(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
-    let (input, temp) = tag("pounder_frequency")(input)?;
+    let (input, _) = tag("pounder_frequency")(input)?;
     let (input, _) = whitespace(input)?;
     let (input, value) = unsigned(input)?;
     let result = value.map(|freq| {
@@ -597,4 +540,78 @@ fn pounder_frequency(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
     });
     Ok((input, result))
 }
+
+// fn gain(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
+//     let (input, _) = tag("gain")(input)?;
+//     let (input, _) = whitespace(input)?;
+//     let (input, channel) = channel(input)?;
+// }
+
+// fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+
+// fn biquad_raw(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+
+// fn biquad_pid(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+
+// fn biquad_filter(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+
+// fn run(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+
+// fn source(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+
+// fn trigger(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+
+// fn telemetry_period(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+
+// fn stream(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+
+// fn pounder_clock(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+
+// fn pounder_channel(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+
+/*
+    gain <0/1> <G1/G2/G5/G10>
+    biquad <0/1> ba ba <T[6]>
+    biquad <0/1> ba u <T>
+    biquad <0/1> ba min <T>
+    biquad <0/1> ba max <T>
+    biquad <0/1> raw ba <T[5]>
+    biquad <0/1> raw u <T>
+    biquad <0/1> raw min <T>
+    biquad <0/1> raw max <T>
+    biquad <0/1> pid order <P/I/I2>
+    biquad <0/1> pid ain <T[5]>
+    biquad <0/1> pid limit <T[5]>
+    biquad <0/1> pid setpoint <T>
+    biquad <0/1> pid min <T>
+    biquad <0/1> pid max <T>
+    biquad <0/1> filter typ <Lowpass/Highpass/Bandpass/Allpass/Notch/Peaking/Lowshelf/Highshelf/IHo>
+    biquad <0,1> filter frequency <T>
+    biquad <0,1> filter gain <T>
+    biquad <0,1> filter shelf <T>
+    biquad <0,1> filter shape <Q/Bandwidth/Slope> <T>
+    biquad <0,1> filter offset <T>
+    biquad <0,1> filter min <T>
+    biquad <0,1> filter max <T>
+    run <0/1> <Run/Hold/External>
+    source <0/1> signal <Cosine/Square/Triangle/WhiteNoise/SweptSine>
+    source <0/1> frequency <f32>
+    source <0/1> symmetry <f32>
+    source <0/1> amplitude <f32>
+    source <0/1> offset <f32>
+    source <0/1> phase <f32>
+    source <0/1> length <u32>
+    source <0/1> state <i64>
+    source <0/1> rate <i32>
+    trigger <0/1>
+    telemetry_period <f32>
+    stream <addr>:<port>    //192.168.0.1:1234
+    pounder clock multiplier <u8>
+    pounder clock reference_clock <u32>
+    pounder clock external_clock <0/1>
+    pounder <in_channel/out_channel> <0/1> dds_frequency <f32>
+    pounder <in_channel/out_channel> <0/1> dds_phase_offset <f32>
+    pounder <in_channel/out_channel> <0/1> dds_amplitude <f32>
+    pounder <in_channel/out_channel> <0/1> attenuation <f32>
+*/
 
