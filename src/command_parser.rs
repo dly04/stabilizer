@@ -156,7 +156,7 @@
     biquad <0/1> raw min <T>
     biquad <0/1> raw max <T>
     biquad <0/1> pid order <P/I/I2>
-    biquad <0/1> pid ain <T[5]>
+    biquad <0/1> pid gain <T[5]>
     biquad <0/1> pid limit <T[5]>
     biquad <0/1> pid setpoint <T>
     biquad <0/1> pid min <T>
@@ -204,7 +204,7 @@ use nom::{
     combinator::{complete, map, opt, value},
     error::ErrorKind,
     multi::{fold_many0, fold_many1},
-    sequence::preceded,
+    sequence::{preceded, tuple},
     IResult, Needed,
 };
 use num_traits::{Num, ParseFloatError};
@@ -226,6 +226,7 @@ pub enum Command {
     },
     BiquadBa {
         channel: usize,
+        field: BiquadBaField,
         ba: [f32; 6],
         u: f32,
         min: f32,
@@ -233,6 +234,7 @@ pub enum Command {
     },
     BiquadRaw {
         channel: usize,
+        field: BiquadRawField,
         ba: [f32; 5],
         u: f32,
         min: f32,
@@ -240,6 +242,7 @@ pub enum Command {
     },
     BiquadPid {
         channel: usize,
+        field: BiquadPidField,
         order: Order,
         gain: PidParam,
         limit: PidParam,
@@ -248,6 +251,8 @@ pub enum Command {
         max: f32
     },
     BiquadFilter {
+        channel: usize,
+        field: BiquadFilterField,
         typ: FilterTyp,
         frequency: f32,
         gain: f32,
@@ -263,6 +268,7 @@ pub enum Command {
     },
     Source {
         channel: usize,
+        field: SourceField,
         signal: Signal,
         frequency: f32,
         symmetry: f32,
@@ -284,6 +290,7 @@ pub enum Command {
     PounderChannel {
         in_out: InOut,
         channel: usize,
+        field: PounderChannelField,
         dds_frequency: f32,
         phase_offset: f32,
         amplitude: f32,
@@ -375,6 +382,71 @@ pub enum Error {
     ParseInt(ParseIntError),
     // `num_traits::ParseFloatError` does not impl Clone
     ParseFloat,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum BiquadBaField {
+    None,
+    Ba,
+    U,
+    Min,
+    Max
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum BiquadRawField {
+    None,
+    Ba,
+    U,
+    Min,
+    Max
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum BiquadPidField {
+    None,
+    Order,
+    Gain,
+    Limit,
+    Setpoint,
+    Min,
+    Max
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum BiquadFilterField {
+    None,
+    Typ,
+    Frequency,
+    Gain,
+    Shelf,
+    Shape,
+    Offset,
+    Min,
+    Max
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum SourceField {
+    None,
+    Signal,
+    Frequency,
+    Symmetry,
+    Amplitude,
+    Offset,
+    Phase,
+    Length,
+    State,
+    Rate
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PounderChannelField {
+    None,
+    Dds_frequency,
+    Phase_offset,
+    Amplitude,
+    Attenuation
 }
 
 impl<'t> From<nom::Err<(&'t [u8], ErrorKind)>> for Error {
@@ -472,18 +544,6 @@ fn channel(input: &[u8]) -> IResult<&[u8], usize> {
     map(one_of("01"), |c| (c as usize) - ('0' as usize))(input)
 }
 
-// fn output_polarity(input: &[u8]) -> IResult<&[u8], Polarity> {
-//     preceded(
-//         tag("polarity"),
-//         preceded(
-//             whitespace,
-//             alt((
-//                 value(Polarity::Normal, tag("normal")),
-//                 value(Polarity::Reversed, tag("reversed")),
-//             )),
-//         ),
-//     )(input)
-// }
 fn parse_gain(input: &[u8]) -> IResult<&[u8], Gain> {
     alt((
         value(Gain::G10, tag("G10")),
@@ -498,8 +558,8 @@ fn command(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
         pounder_frequency,
         map(report, Ok),
 
-        // gain,
-        // biquad_ba,
+        gain,
+        biquad_ba,
         // biquad_raw,
         // biquad_pid,
         // biquad_filter,
@@ -525,7 +585,6 @@ impl Command {
 }
 
 fn report(input: &[u8]) -> IResult<&[u8], Command> {
-    info!("here, report!");
     let (input, _) = tag("report")(input)?;
     let (input, _) = end(input)?;
     Ok((input, Command::Show(ShowCommand::Input)))
@@ -541,13 +600,124 @@ fn pounder_frequency(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
     Ok((input, result))
 }
 
-// fn gain(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
-//     let (input, _) = tag("gain")(input)?;
-//     let (input, _) = whitespace(input)?;
-//     let (input, channel) = channel(input)?;
-// }
+fn gain(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
+    let (input, _) = tag("gain")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, channel) = channel(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, gain) = parse_gain(input)?;
+    end(input)?;
 
-// fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+    Ok((
+        input, 
+        Ok(Command::Gain {channel, gain}),
+    ))
+}
+
+fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
+    let (input, _) = tag("biquad")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, parsed_channel) = channel(input)?;
+    let (input, _) = whitespace (input)?;
+    let (input, _) = tag("ba")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, result) = alt((
+        |input| {
+            let (input, _) = tag("ba")(input)?;
+            let (input, _) = whitespace (input)?;
+            let parse_6_f32 = tuple ((
+                float, whitespace, float, whitespace, float, whitespace, float, whitespace, float, whitespace, float
+            ));
+            let (input, (b0, _, b1, _, b2, _, a0, _, a1, _, a2)) = parse_6_f32(input)?;
+            let ba_array = match (b0, b1, b2, a0, a1, a2) {
+                (Ok(b0), Ok(b1), Ok(b2), Ok(a0), Ok(a1), Ok(a2)) =>
+                    [b0 as f32, b1 as f32, b2 as f32, a0 as f32, a1 as f32, a2 as f32],
+                _ => return Ok((input, Err(Error::ParseFloat))),
+            };
+            let cmd = Command::BiquadBa {
+                channel: parsed_channel,
+                field: BiquadBaField::Ba,
+                ba: ba_array,
+                u: 0.0,
+                min: 0.0,
+                max: 0.0,
+            };
+
+            Ok((input, Ok(cmd)))
+        },
+
+        // |input| {
+        //     let (input, parsed_field) = alt((
+        //        value(BiquadBaField::U, tag("u")),
+        //        value(BiquadBaField::Min, tag("min")),
+        //        value(BiquadBaField::Max, tag("max"))
+        //     ))(input)?;
+        //     let (input, _) = whitespace (input)?;
+        //     let (input, parsed_u) = float(input)?;
+        //     match parsed_u {
+        //         Ok(value) => {
+        //             match parsed_field {
+        //                 BiquadBaField::U => {
+        //                     let cmd = Command::BiquadBa {
+        //                         channel: parsed_channel,
+        //                         field: BiquadBaField::U,
+        //                         ba: [0.0; 6],
+        //                         u: value as f32,
+        //                         min: 0.0,
+        //                         max: 0.0
+        //                     }
+        //                     Ok((input, Ok(cmd)))
+        //                 },
+        //                 BiquadBaField::Min => {
+        //                     let cmd = Command::BiquadBa {
+        //                         channel: parsed_channel,
+        //                         field: BiquadBaField::Min,
+        //                         ba: [0.0; 6];
+        //                         u: 0.0,
+        //                         min: value as f32,
+        //                         max: 0.0
+        //                     }
+        //                     Ok((input, Ok(cmd)))
+        //                 },
+        //                 BiquadBaField::Max => {
+        //                     let cmd = Command::BiquadBa {
+        //                         channel: parsed_channel,
+        //                         field: BiquadBaField::Max,
+        //                         ba: [0.0; 6],
+        //                         u: 0.0,
+        //                         min: 0.0,
+        //                         max: value as f32
+        //                     }
+        //                     Ok((input, Ok(cmd)))
+        //                 },
+        //                 _ => Ok((input, Err(Error::)))
+        //             }
+        //         }
+        //         Err(e) => Ok((input, Err(Error::Incomplete)))
+        //     }
+        // },
+
+        |input| {
+            let (input, (parsed_field, _, parsed_value)) = tuple((
+                alt((
+                    value(BiquadBaField::U, tag("u")),
+                    value(BiquadBaField::Min, tag("min")),
+                    value(BiquadBaField::Max, tag("max")),
+                )),
+                whitespace,
+                float,
+            ))(input)?;
+            let result = match parsed_value {
+                Ok(value) => {
+                    
+                }
+            }
+        }
+    ))(input)?;
+
+    let (input, _) = end(input)?;
+    Ok((input, result))
+}
 
 // fn biquad_raw(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
 

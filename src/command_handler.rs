@@ -1,5 +1,5 @@
 use smoltcp_nal::smoltcp::socket::tcp::Socket as TcpSocket;
-use log::{error, warn};
+use log::{error, info, warn};
 use core::fmt::Write;
 use heapless::Vec;
 use crate::command_parser::Command;
@@ -67,9 +67,16 @@ impl Handler {
         settings: &mut DualIir,
     ) -> Result<Self, Error> {
         match command {
-            Command::Show(ShowCommand::Input) => Handler::show_report(socket, telemetry),
+            Command::Show(ShowCommand::Input) => {
+                info!("Parsed report command");
+                Handler::show_report(socket, telemetry)
+            },
             Command::Show(ShowCommand::Ipv4) => Handler::show_ipv4(socket),
             Command::PounderFrequency { frequency } => Handler::change_pounder_frequency(socket, frequency, settings),
+            Command::Gain {channel, gain} => {
+                info!("Parsed gain command");
+                Handler::gain(socket)
+            },
             _ => todo!(),
         }
     }
@@ -100,9 +107,14 @@ impl Handler {
         pounder.out_channel[0].attenuation = Leaf(16.0);
         send_line(socket, b"{}");
         Ok(Handler::SettingsChanged)
-    } else {
+        } else {
+            send_line(socket, b"{}");
+            Ok(Handler::Handled)
+        }
+    }
+
+    fn gain(socket: &mut TcpSocket) -> Result<Handler, Error> {
         send_line(socket, b"{}");
         Ok(Handler::Handled)
-    }
     }
 }

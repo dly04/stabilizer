@@ -68,7 +68,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @asyncSlot()
     async def on_test_btn_clicked(self):
-        await self._stabilizer.set_param(topic = "pounder_frequency", value = "20000000")
+        # await self._stabilizer.set_param(topic = "pounder_frequency", value = "20000000")
+        await self._stabilizer.set_param(topic = "gain", channel = "0", value = "G1")
 
 async def coro_main():
     app_quit_event = asyncio.Event()

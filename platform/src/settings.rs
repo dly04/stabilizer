@@ -1,3 +1,61 @@
+// fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
+//     let (input, _) = tag("biquad")(input)?;
+//     let (input, _) = whitespace(input)?;
+//     let (input, parsed_channel) = channel(input)?;
+//     let (input, _) = whitespace (input)?;
+//     let (input, _) = tag("ba")(input)?;
+//     let (input, _) = whitespace(input)?;
+//     let (input, result) = alt((
+//         |input| {
+//             let (input, _) = tag("ba")(input)?;
+//             let (input, _) = whitespace (input)?;
+//             let parse_6_f32 = tuple ((
+//                 float, whitespace, float, whitespace, float, whitespace, float, whitespace, float, whitespace, float
+//             ));
+//             let (input, (b0, _, b1, _, b2, _, a0, _, a1, _, a2)) = parse_6_f32(input)?;
+//             let ba_array = match (b0, b1, b2, a0, a1, a2) {
+//                 (Ok(b0), Ok(b1), Ok(b2), Ok(a0), Ok(a1), Ok(a2)) =>
+//                     [b0 as f32, b1 as f32, b2 as f32, a0 as f32, a1 as f32, a2 as f32],
+//                 _ => return Ok((input, Err(Error::ParseFloat))),
+//             };
+//             let (input, _) = end(input)?;
+//             let cmd = Command::BiquadBa {
+//                 channel: parsed_channel,
+//                 field: BiquadBaField::Ba,
+//                 ba: ba_array,
+//                 u: 0.0,
+//                 min: 0.0,
+//                 max: 0.0,
+//             };
+
+//             Ok((input, Ok(cmd)))
+//         },
+//         |input| {
+//             let (input, _) = tag("u")(input)?;
+//             let (input, _) = whitespace (input)?;
+//             let (input, parsed_u) = float(input)?;
+//             match parsed_u {
+//                 Ok(value) => {
+//                     let (input, _) = end(input)?;
+//                     let cmd = Command::BiquadBa {
+//                         channel:parsed_channel,
+//                         field: BiquadBaField::U,
+//                         ba: [0.0; 6],
+//                         u: value as f32,
+//                         min: 0.0,
+//                         max: 0.0
+//                     };
+//                     Ok((input, Ok(cmd)))
+//                 }
+//                 Err(e) => Ok((input, Err(Error::ParseFloat))),
+//             }
+//         },
+//     ))(input)?;
+
+//     let (input, _) = end(input)?;
+//     Ok((input, result))
+// }
+
 //! Stabilizer Settings Management
 //!
 //! # Design
