@@ -560,9 +560,9 @@ fn command(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
 
         gain,
         biquad_ba,
-        // biquad_raw,
-        // biquad_pid,
-        // biquad_filter,
+        biquad_raw,
+        biquad_pid,
+        biquad_filter,
         // run,
         // source,
         // trigger,
@@ -642,61 +642,8 @@ fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 min: 0.0,
                 max: 0.0,
             };
-
             Ok((input, Ok(cmd)))
         },
-
-        // |input| {
-        //     let (input, parsed_field) = alt((
-        //        value(BiquadBaField::U, tag("u")),
-        //        value(BiquadBaField::Min, tag("min")),
-        //        value(BiquadBaField::Max, tag("max"))
-        //     ))(input)?;
-        //     let (input, _) = whitespace (input)?;
-        //     let (input, parsed_u) = float(input)?;
-        //     match parsed_u {
-        //         Ok(value) => {
-        //             match parsed_field {
-        //                 BiquadBaField::U => {
-        //                     let cmd = Command::BiquadBa {
-        //                         channel: parsed_channel,
-        //                         field: BiquadBaField::U,
-        //                         ba: [0.0; 6],
-        //                         u: value as f32,
-        //                         min: 0.0,
-        //                         max: 0.0
-        //                     }
-        //                     Ok((input, Ok(cmd)))
-        //                 },
-        //                 BiquadBaField::Min => {
-        //                     let cmd = Command::BiquadBa {
-        //                         channel: parsed_channel,
-        //                         field: BiquadBaField::Min,
-        //                         ba: [0.0; 6];
-        //                         u: 0.0,
-        //                         min: value as f32,
-        //                         max: 0.0
-        //                     }
-        //                     Ok((input, Ok(cmd)))
-        //                 },
-        //                 BiquadBaField::Max => {
-        //                     let cmd = Command::BiquadBa {
-        //                         channel: parsed_channel,
-        //                         field: BiquadBaField::Max,
-        //                         ba: [0.0; 6],
-        //                         u: 0.0,
-        //                         min: 0.0,
-        //                         max: value as f32
-        //                     }
-        //                     Ok((input, Ok(cmd)))
-        //                 },
-        //                 _ => Ok((input, Err(Error::)))
-        //             }
-        //         }
-        //         Err(e) => Ok((input, Err(Error::Incomplete)))
-        //     }
-        // },
-
         |input| {
             let (input, (parsed_field, _, parsed_value)) = tuple((
                 alt((
@@ -707,10 +654,202 @@ fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 whitespace,
                 float,
             ))(input)?;
-            let result = match parsed_value {
+            let param_result = match parsed_value {
                 Ok(value) => {
-                    
+                    let (u, min, max) = match parsed_field {
+                        BiquadBaField::U => (value as f32, 0.0, 0.0),
+                        BiquadBaField::Min => (0.0, value as f32, 0.0),
+                        BiquadBaField::Max => (0.0, 0.0, value as f32),
+                        _ => unreachable!(),
+                    };
+                    let cmd = Command::BiquadBa {
+                        channel: parsed_channel,
+                        field: parsed_field,
+                        ba: [0.0; 6],
+                        u,
+                        min, 
+                        max
+                    };
+
+                    Ok((input, Ok(cmd)))
                 }
+                Err(e) => return Ok((input, Err(Error::ParseFloat)))
+            };
+            param_result
+        }
+    ))(input)?;
+
+    let (input, _) = end(input)?;
+    Ok((input, result))
+}
+
+fn biquad_raw(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
+    let (input, _) = tag("biquad")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, parsed_channel) = channel(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, _) = tag("raw")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, result) = alt((
+        |input| {
+            let (input, _) = tag("ba")(input)?;
+            let (input, _) = whitespace(input)?;
+            let parse_5_f32 = tuple((
+                float, whitespace, float, whitespace, float, whitespace, float, whitespace, float
+            ));
+            let (input, (b0, _, b1, _, b2, _, a1, _, a2)) = parse_5_f32(input)?;
+            let ba_array = match (b0, b1, b2, a1, a2) {
+                (Ok(b0), Ok(b1), Ok(b2), Ok(a1), Ok(a2)) =>
+                    [b0 as f32, b1 as f32, b2 as f32, a1 as f32, a2 as f32],
+                _ => return Ok((input, Err(Error::ParseFloat)))
+            };
+            let cmd = Command::BiquadRaw {
+                channel: parsed_channel,
+                field: BiquadRawField::Ba,
+                ba: ba_array,
+                u: 0.0,
+                min: 0.0,
+                max: 0.0
+            };
+            Ok((input, Ok(cmd)))
+        },
+        |input| {
+            let (input, (parsed_field, _, parsed_value)) = tuple((
+                alt((
+                    value(BiquadRawField::U, tag("u")),
+                    value(BiquadRawField::Min, tag("min")),
+                    value(BiquadRawField::Max, tag("max"))
+                )),
+                whitespace,
+                float
+            ))(input)?;
+            let param_result = match parsed_value {
+                Ok(value) => {
+                    let (u, min, max) = match parsed_field {
+                        BiquadRawField::U => (value as f32, 0.0, 0.0),
+                        BiquadRawField::Min => (0.0, value as f32, 0.0),
+                        BiquadRawField::Max => (0.0, 0.0, value as f32),
+                        _ => unreachable!()
+                    };
+                    let cmd = Command::BiquadRaw {
+                        channel: parsed_channel,
+                        field: parsed_field,
+                        ba: [0.0; 5],
+                        u,
+                        min,
+                        max
+                    };
+                    Ok((input, Ok(cmd)))
+                }
+                Err(e) => return Ok((input, Err(Error::ParseFloat)))
+            };
+            param_result
+        }
+    ))(input)?;
+
+    let (input, _) = end(input)?;
+    Ok((input, result))
+}
+
+fn biquad_pid(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
+    let (input, _) = tag("biquad")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, parsed_channel) = channel(input)?;
+    let (input, _) = tag("pid")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, result) = alt ((
+        |input| {
+            let (input, _) = tag("order")(input)?;
+            let (input, _) = whitespace(input)?;
+            let (input, order) = alt((
+                value(Order::P, tag("P")),
+                value(Order::I, tag("I")),
+                value(Order::I2, tag("I2"))
+            ))(input)?;
+            let cmd = Command::BiquadPid {
+                channel: parsed_channel,
+                field: BiquadPidField::Order,
+                order,
+                gain: PidParam {i2: 0.0, i: 0.0, p: 0.0, d: 0.0, d2: 0.0},
+                limit: PidParam {i2: 0.0, i: 0.0, p: 0.0, d: 0.0, d2: 0.0},
+                setpoint: 0.0,
+                min: 0.0,
+                max: 0.0
+            };
+            Ok((input, Ok(cmd)))
+        },
+        |input| {
+            let (input, (parsed_field, _, (i2, _, i, _, p, _, d, _, d2))) = tuple((
+                alt((
+                    value(BiquadPidField::Gain, tag("gain")),
+                    value(BiquadPidField::Limit, tag("limit"))
+                )),
+                whitespace,
+                tuple((
+                    float, whitespace, float, whitespace, float, whitespace, float, whitespace, float
+                ))
+            ))(input)?;
+            let (gain, limit) = match (i2, i, p, d, d2) {
+                (Ok(i2), Ok(i), Ok(p), Ok(d), Ok(d2)) => {
+                    match parsed_field {
+                        BiquadPidField::Gain => (PidParam {
+                                i2: i2 as f32, i: i as f32, p: p as f32, d: d as f32, d2: d2 as f32
+                            }, PidParam {
+                                i2: 0.0, i: 0.0, p: 0.0, d: 0.0, d2: 0.0
+                            }),
+                        BiquadPidField::Limit => (PidParam {
+                                i2: 0.0, i: 0.0, p: 0.0, d: 0.0, d2: 0.0
+                            }, PidParam {
+                                i2: i2 as f32, i: i as f32, p: p as f32, d: d as f32, d2: d2 as f32
+                            }),
+                        _ => unreachable!()
+                    }
+                }
+                _ => return Ok((input, Err(Error::ParseFloat)))
+            };
+            let cmd = Command::BiquadPid {
+                channel: parsed_channel,
+                field: parsed_field,
+                order: Order::P,
+                gain,
+                limit,
+                setpoint:0.0,
+                min: 0.0,
+                max: 0.0
+            };
+            Ok((input, Ok(cmd)))
+        },
+        |input| {
+            let (input, (parsed_field, _, parsed_value)) = tuple((
+                alt((
+                    value(BiquadPidField::Setpoint, tag("setpoint")),
+                    value(BiquadPidField::Min, tag("min")),
+                    value(BiquadPidField::Max, tag("max"))
+                )),
+                whitespace,
+                float
+            ))(input)?;
+            match parsed_value {
+                Ok(value) => {
+                    let (setpoint, min, max) = match parsed_field {
+                        BiquadPidField::Setpoint => (value as f32, 0.0, 0.0),
+                        BiquadPidField::Min => (0.0, value as f32, 0.0),
+                        BiquadPidField::Max => (0.0, 0.0, value as f32),
+                        _ => unreachable!()
+                    };
+                    let cmd = Command::BiquadPid {
+                        channel: parsed_channel,
+                        field: parsed_field,
+                        order: Order::P,
+                        gain: PidParam {i2: 0.0, i: 0.0, p: 0.0, d: 0.0, d2: 0.0},
+                        limit: PidParam {i2: 0.0, i: 0.0, p: 0.0, d: 0.0, d2: 0.0},
+                        setpoint,
+                        min,
+                        max
+                    };
+                    Ok((input, Ok(cmd)))
+                }
+                Err(e) => return Ok((input, Err(Error::ParseFloat)))
             }
         }
     ))(input)?;
@@ -719,11 +858,24 @@ fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
     Ok((input, result))
 }
 
-// fn biquad_raw(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
-
-// fn biquad_pid(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
-
-// fn biquad_filter(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+fn biquad_filter(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
+    let (input, _) = tag("biquad")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, channel) = channel(input)?;
+    let (inpit, _) = whitespace(input)?;
+    let (input, _) = tag("filter")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, result) = alt((
+        |input| {
+            let (input, _) = tag("typ")(input?);
+            alt((
+                value(FilterTyp::Lowpass, tag("Lowpass")),
+                value(FilterTyp::Highpass, tag("Highpass")),
+                value(FilterTyp::BandPass, tag("Bandpass"))
+            ))(input)?;
+        }
+    ))(input)?
+}
 
 // fn run(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
 
@@ -740,21 +892,6 @@ fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
 // fn pounder_channel(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
 
 /*
-    gain <0/1> <G1/G2/G5/G10>
-    biquad <0/1> ba ba <T[6]>
-    biquad <0/1> ba u <T>
-    biquad <0/1> ba min <T>
-    biquad <0/1> ba max <T>
-    biquad <0/1> raw ba <T[5]>
-    biquad <0/1> raw u <T>
-    biquad <0/1> raw min <T>
-    biquad <0/1> raw max <T>
-    biquad <0/1> pid order <P/I/I2>
-    biquad <0/1> pid ain <T[5]>
-    biquad <0/1> pid limit <T[5]>
-    biquad <0/1> pid setpoint <T>
-    biquad <0/1> pid min <T>
-    biquad <0/1> pid max <T>
     biquad <0/1> filter typ <Lowpass/Highpass/Bandpass/Allpass/Notch/Peaking/Lowshelf/Highshelf/IHo>
     biquad <0,1> filter frequency <T>
     biquad <0,1> filter gain <T>
