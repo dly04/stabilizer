@@ -871,7 +871,10 @@ fn biquad_filter(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             alt((
                 value(FilterTyp::Lowpass, tag("Lowpass")),
                 value(FilterTyp::Highpass, tag("Highpass")),
-                value(FilterTyp::BandPass, tag("Bandpass"))
+                value(FilterTyp::BandPass, tag("Bandpass")),
+                value(FilterTyp::Allpass, tag("Allpass")),
+                value(FilterTyp::Notch, tag("Notch")),
+                value(FilterTyp::)
             ))(input)?;
         }
     ))(input)?
