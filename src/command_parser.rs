@@ -270,19 +270,23 @@ pub enum Command {
         channel: usize,
         field: SourceField,
         signal: Signal,
-        frequency: f32,
-        symmetry: f32,
-        amplitude: f32,
-        offset: f32,
-        phase: f32,
+        frequency: f64,
+        symmetry: f64,
+        amplitude: f64,
+        offset: f64,
+        phase: f64,
         length: u32,
         state: i64,
         rate: i32
     },
     Trigger,
-    TelemetryPeriod(f32),
-    Stream(core::net::SocketAddr),
+    TelemetryPeriod(f64),
+    Stream{
+        ip: [u8; 4],
+        port: u16
+    },
     PounderClock {
+        field: PounderClockField,
         multiplier: u8,
         reference_clock: u32,
         external_clock: bool
@@ -346,7 +350,7 @@ pub enum FilterTyp {
 #[derive(Debug, Clone, PartialEq)]
 pub enum FilterShape {
     Q(f32),
-    BandWidth(f32),
+    Bandwidth(f32),
     Slope(f32)
 }
 
@@ -357,7 +361,6 @@ pub enum Run {
     External
 }
 
-//source <0/1> signal <Cosine/Square/Triangle/WhiteNoise/SweptSine>
 #[derive(Debug, Clone, PartialEq)]
 pub enum Signal {
     Cosine,
@@ -428,7 +431,6 @@ pub enum BiquadFilterField {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SourceField {
-    None,
     Signal,
     Frequency,
     Symmetry,
@@ -438,6 +440,14 @@ pub enum SourceField {
     Length,
     State,
     Rate
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PounderClockField {
+    None,
+    Multiplier,
+    Reference_clock,
+    External_clock
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -529,6 +539,19 @@ fn unsigned(input: &[u8]) -> IResult<&[u8], Result<u32, Error>> {
     })
 }
 
+fn signed(input: &[u8]) -> IResult<&[u8], Result<i64, Error>> {
+    let (input, sign) = opt(is_a("-"))(input)?;
+    let negative = sign.is_some();
+    take_while1(is_digit)(input).map(|(input, digits)| {
+        let result = from_utf8(digits)
+        .map_err(|e| e.into())
+        .and_then(|digits| digits.parse::<u64>().map_err(|e| e.into()))
+        .map(|num| num as i64)
+        .map(|num| if negative {-num} else {num});
+        (input, result)
+    })
+}
+
 fn float(input: &[u8]) -> IResult<&[u8], Result<f64, Error>> {
     let (input, sign) = opt(is_a("-"))(input)?;
     let negative = sign.is_some();
@@ -563,11 +586,11 @@ fn command(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
         biquad_raw,
         biquad_pid,
         biquad_filter,
-        // run,
-        // source,
-        // trigger,
-        // telemetry_period,
-        // stream,
+        run,
+        source,
+        trigger,
+        telemetry_period,
+        stream,
         // pounder_clock,
         // pounder_channel
     ))(input)
@@ -673,7 +696,7 @@ fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
 
                     Ok((input, Ok(cmd)))
                 }
-                Err(e) => return Ok((input, Err(Error::ParseFloat)))
+                Err(_e) => return Ok((input, Err(Error::ParseFloat)))
             };
             param_result
         }
@@ -741,7 +764,7 @@ fn biquad_raw(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                     };
                     Ok((input, Ok(cmd)))
                 }
-                Err(e) => return Ok((input, Err(Error::ParseFloat)))
+                Err(_e) => return Ok((input, Err(Error::ParseFloat)))
             };
             param_result
         }
@@ -849,7 +872,7 @@ fn biquad_pid(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                     };
                     Ok((input, Ok(cmd)))
                 }
-                Err(e) => return Ok((input, Err(Error::ParseFloat)))
+                Err(_e) => return Ok((input, Err(Error::ParseFloat)))
             }
         }
     ))(input)?;
@@ -867,55 +890,361 @@ fn biquad_filter(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
     let (input, _) = whitespace(input)?;
     let (input, result) = alt((
         |input| {
-            let (input, _) = tag("typ")(input?);
-            alt((
+            let (input, _) = tag("typ")(input)?;
+            let (input, _) = whitespace(input)?;
+            let (input, typ) = alt((
                 value(FilterTyp::Lowpass, tag("Lowpass")),
                 value(FilterTyp::Highpass, tag("Highpass")),
-                value(FilterTyp::BandPass, tag("Bandpass")),
+                value(FilterTyp::Bandpass, tag("Bandpass")),
                 value(FilterTyp::Allpass, tag("Allpass")),
                 value(FilterTyp::Notch, tag("Notch")),
-                value(FilterTyp::)
+                value(FilterTyp::Peaking, tag("Peaking")),
+                value(FilterTyp::Lowshelf, tag("Lowshelf")),
+                value(FilterTyp::Highshelf, tag("Highshelf")),
+                value(FilterTyp::IHo, tag("IHo"))
             ))(input)?;
+            let cmd = Command::BiquadFilter {
+                channel,
+                field: BiquadFilterField::Typ,
+                typ,
+                frequency: 0.0,
+                gain: 0.0,
+                shelf: 0.0,
+                shape: FilterShape::Q(0.0),
+                offset: 0.0,
+                min: 0.0,
+                max: 0.0
+            };
+            Ok((input, Ok(cmd)))
+        },
+        |input| {
+            let (input, (parsed_field, _, parsed_value)) = tuple((
+                alt((
+                    value(BiquadFilterField::Frequency, tag("frequency")),
+                    value(BiquadFilterField::Gain, tag("gain")),
+                    value(BiquadFilterField::Shelf, tag("shelf")),
+                    value(BiquadFilterField::Offset, tag("offset")),
+                    value(BiquadFilterField::Min, tag("min")),
+                    value(BiquadFilterField::Max, tag("max"))
+                )),
+                whitespace,
+                float
+            ))(input)?;
+            match parsed_value {
+                Ok(value) => {
+                    let (frequency, gain, shelf, offset, min, max) = match parsed_field {
+                        BiquadFilterField::Frequency => (value as f32, 0.0, 0.0, 0.0, 0.0, 0.0),
+                        BiquadFilterField::Gain => (0.0, value as f32, 0.0, 0.0, 0.0, 0.0),
+                        BiquadFilterField::Shelf => (0.0, 0.0, value as f32, 0.0, 0.0, 0.0),
+                        BiquadFilterField::Offset => (0.0, 0.0, 0.0, value as f32, 0.0, 0.0),
+                        BiquadFilterField::Min => (0.0, 0.0, 0.0, 0.0, value as f32, 0.0),
+                        BiquadFilterField::Max => (0.0, 0.0, 0.0, 0.0, 0.0, value as f32),
+                        _ => unreachable!()
+                    };
+                    let cmd = Command::BiquadFilter {
+                        channel,
+                        field: parsed_field,
+                        typ: FilterTyp::Lowpass,
+                        frequency,
+                        gain,
+                        shelf,
+                        shape: FilterShape::Q(0.0),
+                        offset,
+                        min,
+                        max
+                    };
+                    Ok((input, Ok(cmd)))
+                }
+                Err(_e) => return Ok((input, Err(Error::ParseFloat)))
+            }
+        },
+        |input| {
+            let (input, _) = tag("shape")(input)?;
+            let (input, (parsed_shape, _, parsed_value)) = tuple((
+                alt((
+                    value(FilterShape::Q(0.0), tag("Q")),
+                    value(FilterShape::Bandwidth(0.0), tag("Bandwidth")),
+                    value(FilterShape::Slope(0.0), tag("Slope"))
+                )),
+                whitespace,
+                float
+            ))(input)?;
+            let shape = match parsed_value {
+                Ok(value) => {
+                    match parsed_shape {
+                        FilterShape::Q(_) => FilterShape::Q(value as f32),
+                        FilterShape::Bandwidth(_) => FilterShape::Bandwidth(value as f32),
+                        FilterShape::Slope(_) => FilterShape::Slope(value as f32),
+                    }
+                }
+                Err(_e) => return Ok((input, Err(Error::ParseFloat)))
+            };
+            let cmd = Command::BiquadFilter {
+                        channel,
+                        field: BiquadFilterField::Shape,
+                        typ: FilterTyp::Lowpass,
+                        frequency: 0.0,
+                        gain: 0.0,
+                        shelf: 0.0,
+                        shape,
+                        offset: 0.0,
+                        min: 0.0,
+                        max: 0.0
+                    };
+                    Ok((input, Ok(cmd)))
         }
-    ))(input)?
+    ))(input)?;
+
+    let (input, _) = end(input)?;
+    Ok((input, result))
 }
 
-// fn run(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+fn run(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
+    let (input, _) = tag("run")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, channel) = channel(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, run) = alt((
+        value(Run::Run, tag("Run")),
+        value(Run::Hold, tag("Hold")),
+        value(Run::External, tag("External"))
+    ))(input)?;
+    let cmd = Command::Run {
+        channel,
+        run
+    };
+    Ok((input, Ok(cmd)))
+}
 
-// fn source(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+fn source(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
+    let (input, _) = tag("source")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, channel) = channel(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, result) = alt((
+        |input| {
+            let (input, _) = tag("signal")(input)?;
+            let (input, _) = whitespace(input)?;
+            let (input, signal) = alt((
+                value(Signal::Cosine, tag("Cosine")),
+                value(Signal::Square, tag("Square")),
+                value(Signal::Triangle, tag("Triangle")),
+                value(Signal::WhiteNoise, tag("WhiteNoise")),
+                value(Signal::SweptSine, tag("SweptSine"))
+            ))(input)?;
+            let cmd = Command::Source {
+                channel,
+                field: SourceField::Signal,
+                signal,
+                frequency: 0.0,
+                symmetry: 0.0,
+                amplitude: 0.0,
+                offset: 0.0,
+                phase: 0.0,
+                length: 0,
+                state: 0,
+                rate:0
+            };
+            Ok((input, Ok(cmd)))
+        },
+        |input| {
+            let (input, (field, _, parsed_value)) = tuple((
+                alt((
+                    value(SourceField::Frequency, tag("frequency")),
+                    value(SourceField::Symmetry, tag("symmetry")),
+                    value(SourceField::Amplitude, tag("amplitude")),
+                    value(SourceField::Offset, tag("offset")),
+                    value(SourceField::Phase, tag("phase"))
+                )),
+                whitespace,
+                float
+            ))(input)?;
+            match parsed_value {
+                Ok(value) => {
+                    let (frequency, symmetry, amplitude, offset, phase) = match field {
+                        SourceField::Frequency => (value, 0.0, 0.0, 0.0, 0.0),
+                        SourceField::Symmetry => (0.0, value, 0.0, 0.0, 0.0),
+                        SourceField::Amplitude => (0.0, 0.0, value, 0.0, 0.0),
+                        SourceField::Offset => (0.0, 0.0, 0.0, value, 0.0),
+                        SourceField::Phase => (0.0, 0.0, 0.0, 0.0, value),
+                        _ => unreachable!()
+                    };
+                    let cmd = Command::Source {
+                        channel,
+                        field,
+                        signal: Signal::Cosine,
+                        frequency,
+                        symmetry,
+                        amplitude,
+                        offset,
+                        phase,
+                        length: 0,
+                        state: 0,
+                        rate: 0
+                    };
+                    Ok((input, Ok(cmd)))
+                }
+                Err(_e) => return Ok((input, Err(Error::ParseFloat)))
+            }
+        },
+        |input| {
+            let (input, _) = tag("length")(input)?;
+            let (input, _) = whitespace(input)?;
+            let (input, parsed_length) = unsigned(input)?;
+            let cmd = parsed_length.map(|length| {
+                Command::Source {
+                    channel,
+                    field: SourceField::Length,
+                    signal: Signal::Cosine,
+                    frequency: 0.0,
+                    symmetry: 0.0,
+                    amplitude: 0.0,
+                    offset: 0.0,
+                    phase: 0.0,
+                    length,
+                    state: 0,
+                    rate: 0
+                }
+            });
+            Ok((input, cmd))
+        },
+        |input| {
+            let (input, _) = tag("state")(input)?;
+            let (input, _) = whitespace(input)?;
+            let (input, parsed_state) = signed(input)?;
+            let cmd = parsed_state.map(|state| {
+                Command::Source {
+                    channel,
+                    field: SourceField::Rate,
+                    signal: Signal::Cosine,
+                    frequency: 0.0,
+                    symmetry: 0.0,
+                    amplitude: 0.0,
+                    offset: 0.0,
+                    phase: 0.0,
+                    length: 0,
+                    state,
+                    rate: 0
+                }
+            });
+            Ok((input, cmd))
+        },
+        |input| {
+            let (input, _) = tag("rate")(input)?;
+            let (input, _) = whitespace(input)?;
+            let (input, value) = signed(input)?;
+            let cmd = value.map(|parsed_rate| {
+                Command::Source {
+                    channel,
+                    field: SourceField::Rate,
+                    signal: Signal::Cosine,
+                    frequency: 0.0,
+                    symmetry: 0.0,
+                    amplitude: 0.0,
+                    offset: 0.0,
+                    phase: 0.0,
+                    length: 0,
+                    state: 0,
+                    rate: parsed_rate as i32
+                }
+            });
+            Ok((input, cmd))
+        }
+    ))(input)?;
 
-// fn trigger(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+    let(input, _) = end(input)?;
+    Ok((input, result))
+}
 
-// fn telemetry_period(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+fn trigger(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
+    let (input, _) = tag("trigger")(input)?;
+    let (input, _) = end(input)?;
+    Ok((input, Ok(Command::Trigger)))
+}
 
-// fn stream(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+fn telemetry_period(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
+    let (input, _) = tag("telemetry_period")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, value) = float(input)?;
+    let cmd = value.map(|telemetry_period| {
+        Command::TelemetryPeriod (telemetry_period)
+    });
+    Ok((input, cmd))
+}
 
-// fn pounder_clock(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
+fn stream(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
+    let (input, _) = tag("stream")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, a_result) = unsigned(input)?;
+    let (input, _) = tag(".")(input)?;
+    let (input, b_result) = unsigned(input)?;
+    let (input, _) = tag(".")(input)?;
+    let (input, c_result) = unsigned(input)?;
+    let (input, _) = tag(".")(input)?;
+    let (input, d_result) = unsigned(input)?;
+    let (input, _) = tag(":")(input)?;
+    let (input, port_result) = unsigned(input)?;
+    let (input, _) = end(input)?;
+    let cmd = a_result.and_then(|a| {
+        b_result.and_then(|b| {
+            c_result.and_then(|c| {
+                d_result.and_then(|d| {
+                    port_result.map(|port| {
+                        Command::Stream {
+                            ip: [a as u8, b as u8, c as u8, d as u8],
+                            port: port as u16
+                        }
+                    })
+                })
+            })
+        })
+    });
+
+    Ok((input, cmd))
+}
+
+fn pounder_clock(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
+    let (input, _) = tag("pounder")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, result) = alt((
+        |input| {
+            let (input, _) = tag("multiplier")(input)?;
+            let (input, _) = whitespace(input)?;
+            let (input, parsed_multiplier) = unsigned(input)?;
+            let cmd = parsed_multiplier.map(|value| {
+                Command::PounderClock {
+                    field: PounderClockField::Multiplier,
+                    multiplier: value as u8,
+                    reference_clock: 0,
+                    external_clock: false
+                }
+            })
+            Ok((input, cmd))
+        },
+        |input| {
+            let (input, _) = tag("reference_clock")(input)?;
+            let (input, _) = whitespace(input)?;
+            let (input, parsed_reference_clock) = unsigned(input)?;
+            let cmd = parsed_reference_clock.map(|reference_clock| {
+                Command::PounderClock {
+                    field: PounderClockField::Referencr_clock,
+                    multiplier: 0,
+                    reference_clock,
+                    external_clock: false
+                }
+            })
+            Ok((input, cmd))
+        },
+        |input|
+    ))(input)?;
+
+    let (input, _) = end(input)?;
+    Ok((input, Ok(result)))
+}
 
 // fn pounder_channel(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
 
 /*
-    biquad <0/1> filter typ <Lowpass/Highpass/Bandpass/Allpass/Notch/Peaking/Lowshelf/Highshelf/IHo>
-    biquad <0,1> filter frequency <T>
-    biquad <0,1> filter gain <T>
-    biquad <0,1> filter shelf <T>
-    biquad <0,1> filter shape <Q/Bandwidth/Slope> <T>
-    biquad <0,1> filter offset <T>
-    biquad <0,1> filter min <T>
-    biquad <0,1> filter max <T>
-    run <0/1> <Run/Hold/External>
-    source <0/1> signal <Cosine/Square/Triangle/WhiteNoise/SweptSine>
-    source <0/1> frequency <f32>
-    source <0/1> symmetry <f32>
-    source <0/1> amplitude <f32>
-    source <0/1> offset <f32>
-    source <0/1> phase <f32>
-    source <0/1> length <u32>
-    source <0/1> state <i64>
-    source <0/1> rate <i32>
-    trigger <0/1>
-    telemetry_period <f32>
-    stream <addr>:<port>    //192.168.0.1:1234
     pounder clock multiplier <u8>
     pounder clock reference_clock <u32>
     pounder clock external_clock <0/1>
