@@ -115,9 +115,9 @@
     ├── stream (stream::Target)
     │   └── : core::net::SocketAddr
     └── pounder (Option<hardware::pounder::PounderConfig>)
-        ├── clock (hardware::pounder::CLockConfig)
+        ├── clock (hardware::pounder::ClockConfig)
         │   ├── multiplier: u8
-        │   ├── reference_clock: u32
+        │   ├── reference_clock: f32
         │   └── external_clock: bool
         ├── in_channel[0]
         │   ├── dds (hardware::pounder::DdsChannelConfig)
@@ -147,28 +147,28 @@
 
 /*
     gain <0/1> <G1/G2/G5/G10>
-    biquad <0/1> ba ba <T[6]>
-    biquad <0/1> ba u <T>
-    biquad <0/1> ba min <T>
-    biquad <0/1> ba max <T>
-    biquad <0/1> raw ba <T[5]>
-    biquad <0/1> raw u <T>
-    biquad <0/1> raw min <T>
-    biquad <0/1> raw max <T>
+    biquad <0/1> ba ba <f64[6]>
+    biquad <0/1> ba u <f64>
+    biquad <0/1> ba min <f64>
+    biquad <0/1> ba max <f64>
+    biquad <0/1> raw ba <f64[5]>
+    biquad <0/1> raw u <f64>
+    biquad <0/1> raw min <f64>
+    biquad <0/1> raw max <f64>
     biquad <0/1> pid order <P/I/I2>
-    biquad <0/1> pid gain <T[5]>
-    biquad <0/1> pid limit <T[5]>
-    biquad <0/1> pid setpoint <T>
-    biquad <0/1> pid min <T>
-    biquad <0/1> pid max <T>
+    biquad <0/1> pid gain <f64[5]>
+    biquad <0/1> pid limit <f64[5]>
+    biquad <0/1> pid setpoint <f64>
+    biquad <0/1> pid min <f64>
+    biquad <0/1> pid max <f64>
     biquad <0/1> filter typ <Lowpass/Highpass/Bandpass/Allpass/Notch/Peaking/Lowshelf/Highshelf/IHo>
-    biquad <0,1> filter frequency <T>
-    biquad <0,1> filter gain <T>
-    biquad <0,1> filter shelf <T>
-    biquad <0,1> filter shape <Q/Bandwidth/Slope> <T>
-    biquad <0,1> filter offset <T>
-    biquad <0,1> filter min <T>
-    biquad <0,1> filter max <T>
+    biquad <0,1> filter frequency <f64>
+    biquad <0,1> filter gain <f64>
+    biquad <0,1> filter shelf <f64>
+    biquad <0,1> filter shape <Q/Bandwidth/Slope> <f64>
+    biquad <0,1> filter offset <f64>
+    biquad <0,1> filter min <f64>
+    biquad <0,1> filter max <f64>
     run <0/1> <Run/Hold/External>
     source <0/1> signal <Cosine/Square/Triangle/WhiteNoise/SweptSine>
     source <0/1> frequency <f32>
@@ -183,8 +183,8 @@
     telemetry_period <f32>
     stream <addr>:<port>    //192.168.0.1:1234
     pounder clock multiplier <u8>
-    pounder clock reference_clock <u32>
-    pounder clock external_clock <0/1>
+    pounder clock reference_clock <f32>
+    pounder clock external_clock <True/False>
     pounder <in_channel/out_channel> <0/1> dds_frequency <f32>
     pounder <in_channel/out_channel> <0/1> dds_phase_offset <f32>
     pounder <in_channel/out_channel> <0/1> dds_amplitude <f32>
@@ -224,21 +224,14 @@ pub enum Command {
         channel: usize,
         gain: Gain
     },
-    BiquadBa {
-        channel: usize,
-        field: BiquadBaField,
-        ba: [f32; 6],
-        u: f32,
-        min: f32,
-        max: f32
-    },
+    BiquadBa(BiquadBaData),
     BiquadRaw {
         channel: usize,
         field: BiquadRawField,
-        ba: [f32; 5],
-        u: f32,
-        min: f32,
-        max: f32
+        ba: [f64; 5],
+        u: f64,
+        min: f64,
+        max: f64
     },
     BiquadPid {
         channel: usize,
@@ -246,21 +239,21 @@ pub enum Command {
         order: Order,
         gain: PidParam,
         limit: PidParam,
-        setpoint: f32,
-        min: f32,
-        max: f32
+        setpoint: f64,
+        min: f64,
+        max: f64
     },
     BiquadFilter {
         channel: usize,
         field: BiquadFilterField,
         typ: FilterTyp,
-        frequency: f32,
-        gain: f32,
-        shelf: f32,
+        frequency: f64,
+        gain: f64,
+        shelf: f64,
         shape: FilterShape,
-        offset: f32,
-        min: f32,
-        max:f32
+        offset: f64,
+        min: f64,
+        max:f64
     },
     Run {
         channel: usize,
@@ -288,7 +281,7 @@ pub enum Command {
     PounderClock {
         field: PounderClockField,
         multiplier: u8,
-        reference_clock: u32,
+        reference_clock: f32,
         external_clock: bool
     },
     PounderChannel {
@@ -300,6 +293,38 @@ pub enum Command {
         amplitude: f32,
         attenuation: f32
     }
+}
+
+impl Command {
+    pub fn parse(input: &[u8]) -> Result<Self, Error> {
+        info!("Command::parse()");
+        match command(input) {
+            Ok((input_remain, result)) if input_remain.is_empty() => result,
+            Ok((input_remain, _)) => Err(Error::UnexpectedInput(input_remain[0])),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn default_biquad_ba(channel: usize) -> Self {
+        Command::BiquadBa(BiquadBaData {
+            channel,
+            field: BiquadBaField::None,
+            ba: [0.0; 6],
+            u: 0.0,
+            min: 0.0,
+            max: 0.0
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct BiquadBaData {
+    channel: usize,
+    field: BiquadBaField,
+    ba: [f64; 6],
+    u: f64,
+    min: f64,
+    max: f64
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -327,11 +352,11 @@ pub enum Order {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PidParam {
-    pub i2: f32,
-    pub i: f32,
-    pub p: f32,
-    pub d: f32,
-    pub d2: f32
+    pub i2: f64,
+    pub i: f64,
+    pub p: f64,
+    pub d: f64,
+    pub d2: f64
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -349,9 +374,9 @@ pub enum FilterTyp {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FilterShape {
-    Q(f32),
-    Bandwidth(f32),
-    Slope(f32)
+    Q(f64),
+    Bandwidth(f64),
+    Slope(f64)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -385,78 +410,6 @@ pub enum Error {
     ParseInt(ParseIntError),
     // `num_traits::ParseFloatError` does not impl Clone
     ParseFloat,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum BiquadBaField {
-    None,
-    Ba,
-    U,
-    Min,
-    Max
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum BiquadRawField {
-    None,
-    Ba,
-    U,
-    Min,
-    Max
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum BiquadPidField {
-    None,
-    Order,
-    Gain,
-    Limit,
-    Setpoint,
-    Min,
-    Max
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum BiquadFilterField {
-    None,
-    Typ,
-    Frequency,
-    Gain,
-    Shelf,
-    Shape,
-    Offset,
-    Min,
-    Max
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum SourceField {
-    Signal,
-    Frequency,
-    Symmetry,
-    Amplitude,
-    Offset,
-    Phase,
-    Length,
-    State,
-    Rate
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum PounderClockField {
-    None,
-    Multiplier,
-    Reference_clock,
-    External_clock
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum PounderChannelField {
-    None,
-    Dds_frequency,
-    Phase_offset,
-    Amplitude,
-    Attenuation
 }
 
 impl<'t> From<nom::Err<(&'t [u8], ErrorKind)>> for Error {
@@ -512,7 +465,80 @@ impl fmt::Display for Error {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum BiquadBaField {
+    None,
+    Ba,
+    U,
+    Min,
+    Max
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum BiquadRawField {
+    None,
+    Ba,
+    U,
+    Min,
+    Max
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum BiquadPidField {
+    None,
+    Order,
+    Gain,
+    Limit,
+    Setpoint,
+    Min,
+    Max
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum BiquadFilterField {
+    None,
+    Typ,
+    Frequency,
+    Gain,
+    Shelf,
+    Shape,
+    Offset,
+    Min,
+    Max
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum SourceField {
+    None,
+    Signal,
+    Frequency,
+    Symmetry,
+    Amplitude,
+    Offset,
+    Phase,
+    Length,
+    State,
+    Rate
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PounderClockField {
+    None,
+    Multiplier,
+    Reference_clock,
+    External_clock
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PounderChannelField {
+    None,
+    Dds_frequency,
+    Phase_offset,
+    Amplitude,
+    Attenuation
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum ShowCommand {
     Input,
     Output,
@@ -591,20 +617,9 @@ fn command(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
         trigger,
         telemetry_period,
         stream,
-        // pounder_clock,
-        // pounder_channel
+        pounder_clock,
+        pounder_channel
     ))(input)
-}
-
-impl Command {
-    pub fn parse(input: &[u8]) -> Result<Self, Error> {
-        info!("Command::parse()");
-        match command(input) {
-            Ok((input_remain, result)) if input_remain.is_empty() => result,
-            Ok((input_remain, _)) => Err(Error::UnexpectedInput(input_remain[0])),
-            Err(e) => Err(e.into()),
-        }
-    }
 }
 
 fn report(input: &[u8]) -> IResult<&[u8], Command> {
@@ -654,16 +669,15 @@ fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             let (input, (b0, _, b1, _, b2, _, a0, _, a1, _, a2)) = parse_6_f32(input)?;
             let ba_array = match (b0, b1, b2, a0, a1, a2) {
                 (Ok(b0), Ok(b1), Ok(b2), Ok(a0), Ok(a1), Ok(a2)) =>
-                    [b0 as f32, b1 as f32, b2 as f32, a0 as f32, a1 as f32, a2 as f32],
+                    [b0, b1, b2, a0, a1, a2],
                 _ => return Ok((input, Err(Error::ParseFloat))),
             };
-            let cmd = Command::BiquadBa {
-                channel: parsed_channel,
-                field: BiquadBaField::Ba,
-                ba: ba_array,
-                u: 0.0,
-                min: 0.0,
-                max: 0.0,
+            let cmd = match Command::default_biquad_ba(parsed_channel) {
+                Command::BiquadBa(mut data) => {
+                    data.ba = ba_array;
+                    Command::BiquadBa(data)
+                }
+                _ => unreachable!()
             };
             Ok((input, Ok(cmd)))
         },
@@ -680,20 +694,18 @@ fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             let param_result = match parsed_value {
                 Ok(value) => {
                     let (u, min, max) = match parsed_field {
-                        BiquadBaField::U => (value as f32, 0.0, 0.0),
-                        BiquadBaField::Min => (0.0, value as f32, 0.0),
-                        BiquadBaField::Max => (0.0, 0.0, value as f32),
-                        _ => unreachable!(),
+                        BiquadBaField::U => (value, 0.0, 0.0),
+                        BiquadBaField::Min => (0.0, value, 0.0),
+                        BiquadBaField::Max => (0.0, 0.0, value),
+                        _ => unreachable!()
                     };
-                    let cmd = Command::BiquadBa {
-                        channel: parsed_channel,
-                        field: parsed_field,
-                        ba: [0.0; 6],
-                        u,
-                        min, 
-                        max
+                    let cmd = match Command::default_biquad_ba(parsed_channel) {
+                        Command::BiquadBa(mut data) => {
+                            (data.field, data.u, data.min, data.max) = (parsed_field, u, min, max);
+                            Command::BiquadBa(data)
+                        }
+                        _ => unreachable!()
                     };
-
                     Ok((input, Ok(cmd)))
                 }
                 Err(_e) => return Ok((input, Err(Error::ParseFloat)))
@@ -723,7 +735,7 @@ fn biquad_raw(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             let (input, (b0, _, b1, _, b2, _, a1, _, a2)) = parse_5_f32(input)?;
             let ba_array = match (b0, b1, b2, a1, a2) {
                 (Ok(b0), Ok(b1), Ok(b2), Ok(a1), Ok(a2)) =>
-                    [b0 as f32, b1 as f32, b2 as f32, a1 as f32, a2 as f32],
+                    [b0, b1, b2, a1, a2],
                 _ => return Ok((input, Err(Error::ParseFloat)))
             };
             let cmd = Command::BiquadRaw {
@@ -749,9 +761,9 @@ fn biquad_raw(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             let param_result = match parsed_value {
                 Ok(value) => {
                     let (u, min, max) = match parsed_field {
-                        BiquadRawField::U => (value as f32, 0.0, 0.0),
-                        BiquadRawField::Min => (0.0, value as f32, 0.0),
-                        BiquadRawField::Max => (0.0, 0.0, value as f32),
+                        BiquadRawField::U => (value, 0.0, 0.0),
+                        BiquadRawField::Min => (0.0, value, 0.0),
+                        BiquadRawField::Max => (0.0, 0.0, value),
                         _ => unreachable!()
                     };
                     let cmd = Command::BiquadRaw {
@@ -816,14 +828,14 @@ fn biquad_pid(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 (Ok(i2), Ok(i), Ok(p), Ok(d), Ok(d2)) => {
                     match parsed_field {
                         BiquadPidField::Gain => (PidParam {
-                                i2: i2 as f32, i: i as f32, p: p as f32, d: d as f32, d2: d2 as f32
+                                i2, i, p, d, d2
                             }, PidParam {
                                 i2: 0.0, i: 0.0, p: 0.0, d: 0.0, d2: 0.0
                             }),
                         BiquadPidField::Limit => (PidParam {
                                 i2: 0.0, i: 0.0, p: 0.0, d: 0.0, d2: 0.0
                             }, PidParam {
-                                i2: i2 as f32, i: i as f32, p: p as f32, d: d as f32, d2: d2 as f32
+                                i2, i, p, d, d2
                             }),
                         _ => unreachable!()
                     }
@@ -855,9 +867,9 @@ fn biquad_pid(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             match parsed_value {
                 Ok(value) => {
                     let (setpoint, min, max) = match parsed_field {
-                        BiquadPidField::Setpoint => (value as f32, 0.0, 0.0),
-                        BiquadPidField::Min => (0.0, value as f32, 0.0),
-                        BiquadPidField::Max => (0.0, 0.0, value as f32),
+                        BiquadPidField::Setpoint => (value, 0.0, 0.0),
+                        BiquadPidField::Min => (0.0, value, 0.0),
+                        BiquadPidField::Max => (0.0, 0.0, value),
                         _ => unreachable!()
                     };
                     let cmd = Command::BiquadPid {
@@ -933,12 +945,12 @@ fn biquad_filter(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             match parsed_value {
                 Ok(value) => {
                     let (frequency, gain, shelf, offset, min, max) = match parsed_field {
-                        BiquadFilterField::Frequency => (value as f32, 0.0, 0.0, 0.0, 0.0, 0.0),
-                        BiquadFilterField::Gain => (0.0, value as f32, 0.0, 0.0, 0.0, 0.0),
-                        BiquadFilterField::Shelf => (0.0, 0.0, value as f32, 0.0, 0.0, 0.0),
-                        BiquadFilterField::Offset => (0.0, 0.0, 0.0, value as f32, 0.0, 0.0),
-                        BiquadFilterField::Min => (0.0, 0.0, 0.0, 0.0, value as f32, 0.0),
-                        BiquadFilterField::Max => (0.0, 0.0, 0.0, 0.0, 0.0, value as f32),
+                        BiquadFilterField::Frequency => (value, 0.0, 0.0, 0.0, 0.0, 0.0),
+                        BiquadFilterField::Gain => (0.0, value, 0.0, 0.0, 0.0, 0.0),
+                        BiquadFilterField::Shelf => (0.0, 0.0, value, 0.0, 0.0, 0.0),
+                        BiquadFilterField::Offset => (0.0, 0.0, 0.0, value, 0.0, 0.0),
+                        BiquadFilterField::Min => (0.0, 0.0, 0.0, 0.0, value, 0.0),
+                        BiquadFilterField::Max => (0.0, 0.0, 0.0, 0.0, 0.0, value),
                         _ => unreachable!()
                     };
                     let cmd = Command::BiquadFilter {
@@ -972,9 +984,9 @@ fn biquad_filter(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             let shape = match parsed_value {
                 Ok(value) => {
                     match parsed_shape {
-                        FilterShape::Q(_) => FilterShape::Q(value as f32),
-                        FilterShape::Bandwidth(_) => FilterShape::Bandwidth(value as f32),
-                        FilterShape::Slope(_) => FilterShape::Slope(value as f32),
+                        FilterShape::Q(_) => FilterShape::Q(value),
+                        FilterShape::Bandwidth(_) => FilterShape::Bandwidth(value),
+                        FilterShape::Slope(_) => FilterShape::Slope(value),
                     }
                 }
                 Err(_e) => return Ok((input, Err(Error::ParseFloat)))
@@ -1215,42 +1227,88 @@ fn pounder_clock(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 Command::PounderClock {
                     field: PounderClockField::Multiplier,
                     multiplier: value as u8,
-                    reference_clock: 0,
+                    reference_clock: 0.0,
                     external_clock: false
                 }
-            })
+            });
             Ok((input, cmd))
         },
         |input| {
             let (input, _) = tag("reference_clock")(input)?;
             let (input, _) = whitespace(input)?;
-            let (input, parsed_reference_clock) = unsigned(input)?;
-            let cmd = parsed_reference_clock.map(|reference_clock| {
+            let (input, parsed_reference_clock) = float(input)?;
+            let cmd = parsed_reference_clock.map(|value| {
                 Command::PounderClock {
-                    field: PounderClockField::Referencr_clock,
+                    field: PounderClockField::Reference_clock,
                     multiplier: 0,
-                    reference_clock,
+                    reference_clock: value as f32,
                     external_clock: false
                 }
-            })
+            });
             Ok((input, cmd))
         },
-        |input|
+        |input| {
+            let (input, _) = tag("external_clock")(input)?;
+            let (input, _) = whitespace(input)?;
+            let (input, external_clock) = alt((
+                value(true, tag("True")),
+                value(false, tag("False"))
+            ))(input)?;
+            let cmd = Command::PounderClock {
+                field: PounderClockField::External_clock,
+                multiplier: 0,
+                reference_clock: 0.0,
+                external_clock
+            };
+            Ok((input, Ok(cmd)))
+        }
     ))(input)?;
 
     let (input, _) = end(input)?;
-    Ok((input, Ok(result)))
+    Ok((input, result))
 }
 
-// fn pounder_channel(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {}
-
-/*
-    pounder clock multiplier <u8>
-    pounder clock reference_clock <u32>
-    pounder clock external_clock <0/1>
-    pounder <in_channel/out_channel> <0/1> dds_frequency <f32>
-    pounder <in_channel/out_channel> <0/1> dds_phase_offset <f32>
-    pounder <in_channel/out_channel> <0/1> dds_amplitude <f32>
-    pounder <in_channel/out_channel> <0/1> attenuation <f32>
-*/
+fn pounder_channel(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
+    let (input, _) = tag("pounder")(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, in_out) = alt((
+        value(InOut::InputChannel, tag("in_channel")),
+        value(InOut::OutputChannel, tag("out_channel"))
+    ))(input)?;
+    let (input, _) = whitespace(input)?;
+    let (input, channel) = channel(input)?;
+    let (input, (field, _, parsed_value)) = tuple((
+        alt((
+            value(PounderChannelField::Dds_frequency, tag("dds_frequency")),
+            value(PounderChannelField::Phase_offset, tag("dds_phase_offset")),
+            value(PounderChannelField::Amplitude, tag("dds_amplitude")),
+            value(PounderChannelField::Attenuation, tag("attenuation"))
+        )),
+        whitespace,
+        float
+    ))(input)?;
+    match parsed_value {
+        Ok(value) => {
+            let (dds_frequency, phase_offset, amplitude, attenuation) = match field {
+                PounderChannelField::Dds_frequency => (value as f32, 0.0, 0.0, 0.0),
+                PounderChannelField::Phase_offset => (0.0, value as f32, 0.0, 0.0),
+                PounderChannelField::Amplitude => (0.0, 0.0, value as f32, 0.0),
+                PounderChannelField::Attenuation => (0.0, 0.0, 0.0, value as f32),
+                _ => unreachable!()
+            };
+            let cmd = Command::PounderChannel {
+                in_out,
+                channel,
+                field,
+                dds_frequency,
+                phase_offset,
+                amplitude,
+                attenuation
+            };
+            let (input, _) = end(input)?;
+            return Ok((input, Ok(cmd)))
+        }
+        Err(_e) => return Ok((input, Err(Error::ParseFloat)))
+    }
+}
 
