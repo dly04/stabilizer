@@ -213,7 +213,7 @@ use serde::{Deserialize, Serialize};
 use log::info;
 use crate::convert;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Command {
     PounderFrequency {
         frequency: u32,
@@ -222,7 +222,7 @@ pub enum Command {
 
     Gain {
         channel: usize,
-        gain: Gain
+        gain: convert::Gain
     },
     BiquadBa(BiquadBaData),
     BiquadRaw(BiquadRawData),
@@ -253,7 +253,7 @@ impl Command {
         }
     }
 
-    pub fn default_biquad_ba(channel: usize, field: BiquadBaField) -> Self {
+    fn default_biquad_ba(channel: usize, field: BiquadBaField) -> Self {
         Command::BiquadBa(BiquadBaData {
             channel,
             field,
@@ -264,7 +264,7 @@ impl Command {
         })
     }
 
-    pub fn default_biquad_raw(channel: usize, field: BiquadRawField) -> Self {
+    fn default_biquad_raw(channel: usize, field: BiquadRawField) -> Self {
         Command::BiquadRaw(BiquadRawData {
             channel,
             field,
@@ -275,20 +275,20 @@ impl Command {
         })
     }
 
-    pub fn default_biquad_pid(channel: usize, field: BiquadPidField) -> Self {
+    fn default_biquad_pid(channel: usize, field: BiquadPidField) -> Self {
         Command::BiquadPid(BiquadPidData {
             channel,
             field,
             order: Order::P,
-            gain: PidParam,
-            limit: PidParam,
+            gain: PidParam::default(),
+            limit: PidParam::default(),
             setpoint: 0.0,
             min: 0.0,
             max: 0.0
         })
     }
 
-    pub fn default_biquad_filter(channel: usize, field: BiquadFilterField) -> Self {
+    fn default_biquad_filter(channel: usize, field: BiquadFilterField) -> Self {
         Command::BiquadFilter(BiquadFilterData {
             channel,
             field,
@@ -303,7 +303,22 @@ impl Command {
         })
     }
 
-    pub fn default_pounder_clock(field: PounderClockField) -> Self {
+    fn default_source(field: SourceField) -> Self {
+        Command::Source(SourceData {
+            field,
+            signal: Signal::Cosine,
+            frequency: 0.0,
+            symmetry: 0.0,
+            amplitude: 0.0,
+            offset: 0.0,
+            phase: 0.0,
+            length: 0,
+            state: 0,
+            rate: 0
+        })
+    }
+
+    fn default_pounder_clock(field: PounderClockField) -> Self {
         Command::PounderClock(PounderClockData {
             field,
             multiplier: 0,
@@ -312,7 +327,7 @@ impl Command {
         })
     }
 
-    pub fn default_pounder_channel(in_out: InOut, channel: usize, field: PounderChannelField) -> Self {
+    fn default_pounder_channel(in_out: InOut, channel: usize, field: PounderChannelField) -> Self {
         Command::PounderChannel(PounderChannelData {
             in_out,
             channel,
@@ -323,6 +338,11 @@ impl Command {
             attenuation: 0.0
         })
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ShowCommand {
+    Input
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -358,21 +378,6 @@ pub struct BiquadPidData {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct SourceData {
-    channel: usize,
-    field: SourceField,
-    signal: Signal,
-    frequency: f64,
-    symmetry: f64,
-    amplitude: f64,
-    offset: f64,
-    phase: f64,
-    length: u32,
-    state: i64,
-    rate: i32
-}
-
-#[derive(Clone, Debug, PartialEq)]
 pub struct BiquadFilterData {
     channel: usize,
     field: BiquadFilterField,
@@ -384,6 +389,20 @@ pub struct BiquadFilterData {
     offset: f64,
     min: f64,
     max:f64
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SourceData {
+    field: SourceField,
+    signal: Signal,
+    frequency: f64,
+    symmetry: f64,
+    amplitude: f64,
+    offset: f64,
+    phase: f64,
+    length: u32,
+    state: i64,
+    rate: i32
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -403,14 +422,6 @@ pub struct PounderChannelData {
     phase_offset: f32,
     amplitude: f32,
     attenuation: f32
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Gain {
-    G1,
-    G2,
-    G5,
-    G10
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -654,12 +665,12 @@ fn channel(input: &[u8]) -> IResult<&[u8], usize> {
     map(one_of("01"), |c| (c as usize) - ('0' as usize))(input)
 }
 
-fn parse_gain(input: &[u8]) -> IResult<&[u8], Gain> {
+fn parse_gain(input: &[u8]) -> IResult<&[u8], convert::Gain> {
     alt((
-        value(Gain::G10, tag("G10")),
-        value(Gain::G1, tag("G1")),
-        value(Gain::G2, tag("G2")),
-        value(Gain::G5, tag("G5")), 
+        value(convert::Gain::G10, tag("G10")),
+        value(convert::Gain::G1, tag("G1")),
+        value(convert::Gain::G2, tag("G2")),
+        value(convert::Gain::G5, tag("G5")), 
     ))(input)
 }
 
@@ -716,7 +727,7 @@ fn gain(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
 fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
     let (input, _) = tag("biquad")(input)?;
     let (input, _) = whitespace(input)?;
-    let (input, parsed_channel) = channel(input)?;
+    let (input, channel) = channel(input)?;
     let (input, _) = whitespace (input)?;
     let (input, _) = tag("ba")(input)?;
     let (input, _) = whitespace(input)?;
@@ -733,7 +744,7 @@ fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                     [b0, b1, b2, a0, a1, a2],
                 _ => return Ok((input, Err(Error::ParseFloat))),
             };
-            let cmd = match Command::default_biquad_ba(parsed_channel, BiquadBaField::Ba) {
+            let cmd = match Command::default_biquad_ba(channel, BiquadBaField::Ba) {
                 Command::BiquadBa(mut data) => {
                     data.ba = ba_array;
                     Command::BiquadBa(data)
@@ -743,7 +754,7 @@ fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             Ok((input, Ok(cmd)))
         },
         |input| {
-            let (input, (parsed_field, _, parsed_value)) = tuple((
+            let (input, (field, _, value)) = tuple((
                 alt((
                     value(BiquadBaField::U, tag("u")),
                     value(BiquadBaField::Min, tag("min")),
@@ -752,15 +763,15 @@ fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 whitespace,
                 float,
             ))(input)?;
-            let param_result = match parsed_value {
+            let param_result = match value {
                 Ok(value) => {
-                    let (u, min, max) = match parsed_field {
+                    let (u, min, max) = match field {
                         BiquadBaField::U => (value, 0.0, 0.0),
                         BiquadBaField::Min => (0.0, value, 0.0),
                         BiquadBaField::Max => (0.0, 0.0, value),
                         _ => unreachable!()
                     };
-                    let cmd = match Command::default_biquad_ba(parsed_channel, parsed_field) {
+                    let cmd = match Command::default_biquad_ba(channel, field) {
                         Command::BiquadBa(mut data) => {
                             (data.u, data.min, data.max) = (u, min, max);
                             Command::BiquadBa(data)
@@ -782,7 +793,7 @@ fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
 fn biquad_raw(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
     let (input, _) = tag("biquad")(input)?;
     let (input, _) = whitespace(input)?;
-    let (input, parsed_channel) = channel(input)?;
+    let (input, channel) = channel(input)?;
     let (input, _) = whitespace(input)?;
     let (input, _) = tag("raw")(input)?;
     let (input, _) = whitespace(input)?;
@@ -809,7 +820,7 @@ fn biquad_raw(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             Ok((input, Ok(cmd)))
         },
         |input| {
-            let (input, (parsed_field, _, parsed_value)) = tuple((
+            let (input, (field, _, value)) = tuple((
                 alt((
                     value(BiquadRawField::U, tag("u")),
                     value(BiquadRawField::Min, tag("min")),
@@ -818,16 +829,16 @@ fn biquad_raw(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 whitespace,
                 float
             ))(input)?;
-            let param_result = match parsed_value {
+            let param_result = match value {
                 Ok(value) => {
-                    let (u, min, max) = match parsed_field {
+                    let (u, min, max) = match field {
                         BiquadRawField::U => (value, 0.0, 0.0),
                         BiquadRawField::Min => (0.0, value, 0.0),
                         BiquadRawField::Max => (0.0, 0.0, value),
                         _ => unreachable!()
                     };
-                    let cmd = match Command::default_biquad_raw(channel, parsed_field) {
-                        Command::BiquadRaw(data) => {
+                    let cmd = match Command::default_biquad_raw(channel, field) {
+                        Command::BiquadRaw(mut data) => {
                             (data.u, data.min, data.max) = (u, min, max);
                             Command::BiquadRaw(data)
                         }
@@ -848,7 +859,7 @@ fn biquad_raw(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
 fn biquad_pid(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
     let (input, _) = tag("biquad")(input)?;
     let (input, _) = whitespace(input)?;
-    let (input, parsed_channel) = channel(input)?;
+    let (input, channel) = channel(input)?;
     let (input, _) = tag("pid")(input)?;
     let (input, _) = whitespace(input)?;
     let (input, result) = alt ((
@@ -860,8 +871,8 @@ fn biquad_pid(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 value(Order::I, tag("I")),
                 value(Order::I2, tag("I2"))
             ))(input)?;
-            let cmd = match Command::default_biquad_pid(parsed_channel, BiquadPidField::Order) {
-                Command::BiquadPid(data) {
+            let cmd = match Command::default_biquad_pid(channel, BiquadPidField::Order) {
+                Command::BiquadPid(mut data) => {
                     data.order = order;
                     Command::BiquadPid(data)
                 }
@@ -870,7 +881,7 @@ fn biquad_pid(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             Ok((input, Ok(cmd)))
         },
         |input| {
-            let (input, (parsed_field, _, (i2, _, i, _, p, _, d, _, d2))) = tuple((
+            let (input, (field, _, (i2, _, i, _, p, _, d, _, d2))) = tuple((
                 alt((
                     value(BiquadPidField::Gain, tag("gain")),
                     value(BiquadPidField::Limit, tag("limit"))
@@ -882,7 +893,7 @@ fn biquad_pid(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             ))(input)?;
             let (gain, limit) = match (i2, i, p, d, d2) {
                 (Ok(i2), Ok(i), Ok(p), Ok(d), Ok(d2)) => {
-                    match parsed_field {
+                    match field {
                         BiquadPidField::Gain => (PidParam {
                                 i2, i, p, d, d2
                             }, PidParam {
@@ -898,17 +909,17 @@ fn biquad_pid(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 }
                 _ => return Ok((input, Err(Error::ParseFloat)))
             };
-            let cmd = match Command::default_biquad_pid(parsed_channel, parsed_field) {
-                Command::BiquadPid(data) => {
+            let cmd = match Command::default_biquad_pid(channel, field) {
+                Command::BiquadPid(mut data) => {
                     (data.gain, data.limit) = (gain, limit);
                     Command::BiquadPid(data)
-                };
+                }
                 _ => unreachable!()
-            }
+            };
             Ok((input, Ok(cmd)))
         },
         |input| {
-            let (input, (parsed_field, _, parsed_value)) = tuple((
+            let (input, (field, _, value)) = tuple((
                 alt((
                     value(BiquadPidField::Setpoint, tag("setpoint")),
                     value(BiquadPidField::Min, tag("min")),
@@ -917,17 +928,17 @@ fn biquad_pid(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 whitespace,
                 float
             ))(input)?;
-            match parsed_value {
+            match value {
                 Ok(value) => {
-                    let (setpoint, min, max) = match parsed_field {
+                    let (setpoint, min, max) = match field {
                         BiquadPidField::Setpoint => (value, 0.0, 0.0),
                         BiquadPidField::Min => (0.0, value, 0.0),
                         BiquadPidField::Max => (0.0, 0.0, value),
                         _ => unreachable!()
                     };
-                    let cmd = match Command::default_biquad_pid(parsed_channel, parsed_field) {
-                        Command::BiquadPid(data) => {
-                            (data.setpoint, data.min, data.max) = (setpoint, min, max)
+                    let cmd = match Command::default_biquad_pid(channel, field) {
+                        Command::BiquadPid(mut data) => {
+                            (data.setpoint, data.min, data.max) = (setpoint, min, max);
                             Command::BiquadPid(data)
                         }
                         _ => unreachable!()
@@ -947,7 +958,7 @@ fn biquad_filter(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
     let (input, _) = tag("biquad")(input)?;
     let (input, _) = whitespace(input)?;
     let (input, channel) = channel(input)?;
-    let (inpit, _) = whitespace(input)?;
+    let (input, _) = whitespace(input)?;
     let (input, _) = tag("filter")(input)?;
     let (input, _) = whitespace(input)?;
     let (input, result) = alt((
@@ -965,8 +976,8 @@ fn biquad_filter(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 value(FilterTyp::Highshelf, tag("Highshelf")),
                 value(FilterTyp::IHo, tag("IHo"))
             ))(input)?;
-            let cmd = match Command::default_biquad_filter(parsed_channel, BiquadFilterField::Typ) {
-                Command::BiquadFilter(data) => {
+            let cmd = match Command::default_biquad_filter(channel, BiquadFilterField::Typ) {
+                Command::BiquadFilter(mut data) => {
                     data.typ = typ;
                     Command::BiquadFilter(data)
                 }
@@ -975,7 +986,7 @@ fn biquad_filter(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             Ok((input, Ok(cmd)))
         },
         |input| {
-            let (input, (parsed_field, _, parsed_value)) = tuple((
+            let (input, (field, _, value)) = tuple((
                 alt((
                     value(BiquadFilterField::Frequency, tag("frequency")),
                     value(BiquadFilterField::Gain, tag("gain")),
@@ -987,9 +998,9 @@ fn biquad_filter(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 whitespace,
                 float
             ))(input)?;
-            match parsed_value {
+            match value {
                 Ok(value) => {
-                    let (frequency, gain, shelf, offset, min, max) = match parsed_field {
+                    let (frequency, gain, shelf, offset, min, max) = match field {
                         BiquadFilterField::Frequency => (value, 0.0, 0.0, 0.0, 0.0, 0.0),
                         BiquadFilterField::Gain => (0.0, value, 0.0, 0.0, 0.0, 0.0),
                         BiquadFilterField::Shelf => (0.0, 0.0, value, 0.0, 0.0, 0.0),
@@ -998,10 +1009,10 @@ fn biquad_filter(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                         BiquadFilterField::Max => (0.0, 0.0, 0.0, 0.0, 0.0, value),
                         _ => unreachable!()
                     };
-                    let cmd = match Command::default_biquad_pid(parsed_channel, parsed_field) {
-                        Command::BiquadPid(data) => {
+                    let cmd = match Command::default_biquad_filter(channel, field) {
+                        Command::BiquadFilter(mut data) => {
                             (data.frequency, data.gain, data.shelf, data.offset, data.min, data.max) = (frequency, gain, shelf, offset, min, max);
-                            Command:BiquadPid(data)
+                            Command::BiquadFilter(data)
                         }
                         _ => unreachable!()
                     };
@@ -1012,7 +1023,7 @@ fn biquad_filter(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
         },
         |input| {
             let (input, _) = tag("shape")(input)?;
-            let (input, (parsed_shape, _, parsed_value)) = tuple((
+            let (input, (shape, _, value)) = tuple((
                 alt((
                     value(FilterShape::Q(0.0), tag("Q")),
                     value(FilterShape::Bandwidth(0.0), tag("Bandwidth")),
@@ -1021,9 +1032,9 @@ fn biquad_filter(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 whitespace,
                 float
             ))(input)?;
-            let shape = match parsed_value {
+            let shape = match value {
                 Ok(value) => {
-                    match parsed_shape {
+                    match shape {
                         FilterShape::Q(_) => FilterShape::Q(value),
                         FilterShape::Bandwidth(_) => FilterShape::Bandwidth(value),
                         FilterShape::Slope(_) => FilterShape::Slope(value),
@@ -1031,10 +1042,10 @@ fn biquad_filter(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 }
                 Err(_e) => return Ok((input, Err(Error::ParseFloat)))
             };
-            let cmd = match Command::default_biquad_filter (parsed_channel, BiquadFilterField::Shape) {
-                Command::BiquadFilter(data) => {
+            let cmd = match Command::default_biquad_filter (channel, BiquadFilterField::Shape) {
+                Command::BiquadFilter(mut data) => {
                     data.shape = shape;
-                    Command:BiquadFilter(data)
+                    Command::BiquadFilter(data)
                 }
                 _ => unreachable!()
             };
@@ -1079,23 +1090,17 @@ fn source(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 value(Signal::WhiteNoise, tag("WhiteNoise")),
                 value(Signal::SweptSine, tag("SweptSine"))
             ))(input)?;
-            let cmd = Command::Source {
-                channel,
-                field: SourceField::Signal,
-                signal,
-                frequency: 0.0,
-                symmetry: 0.0,
-                amplitude: 0.0,
-                offset: 0.0,
-                phase: 0.0,
-                length: 0,
-                state: 0,
-                rate:0
+            let cmd = match Command::default_source(SourceField::Signal) {
+                Command::Source(mut data) => {
+                    data.signal = signal;
+                    Command::Source(data)
+                }
+                _ => unreachable!()
             };
             Ok((input, Ok(cmd)))
         },
         |input| {
-            let (input, (field, _, parsed_value)) = tuple((
+            let (input, (field, _, value)) = tuple((
                 alt((
                     value(SourceField::Frequency, tag("frequency")),
                     value(SourceField::Symmetry, tag("symmetry")),
@@ -1106,7 +1111,7 @@ fn source(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 whitespace,
                 float
             ))(input)?;
-            match parsed_value {
+            match value {
                 Ok(value) => {
                     let (frequency, symmetry, amplitude, offset, phase) = match field {
                         SourceField::Frequency => (value, 0.0, 0.0, 0.0, 0.0),
@@ -1116,18 +1121,12 @@ fn source(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                         SourceField::Phase => (0.0, 0.0, 0.0, 0.0, value),
                         _ => unreachable!()
                     };
-                    let cmd = Command::Source {
-                        channel,
-                        field,
-                        signal: Signal::Cosine,
-                        frequency,
-                        symmetry,
-                        amplitude,
-                        offset,
-                        phase,
-                        length: 0,
-                        state: 0,
-                        rate: 0
+                    let cmd = match Command::default_source(field) {
+                        Command::Source(mut data) => {
+                            (data.frequency, data.symmetry, data.amplitude, data.offset, data.phase = frequency, symmetry, amplitude, offset, phase);
+                            Command::Source(data)
+                        }
+                        _ => unreachable!()
                     };
                     Ok((input, Ok(cmd)))
                 }
@@ -1137,20 +1136,14 @@ fn source(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
         |input| {
             let (input, _) = tag("length")(input)?;
             let (input, _) = whitespace(input)?;
-            let (input, parsed_length) = unsigned(input)?;
-            let cmd = parsed_length.map(|length| {
-                Command::Source {
-                    channel,
-                    field: SourceField::Length,
-                    signal: Signal::Cosine,
-                    frequency: 0.0,
-                    symmetry: 0.0,
-                    amplitude: 0.0,
-                    offset: 0.0,
-                    phase: 0.0,
-                    length,
-                    state: 0,
-                    rate: 0
+            let (input, length) = unsigned(input)?;
+            let cmd = length.map(|length| {
+                match Command::default_source(SourceField::Length) {
+                    Command::Source(mut data) => {
+                        data.length = length;
+                        Command::Source(data)
+                    }
+                    _ => unreachable!()
                 }
             });
             Ok((input, cmd))
@@ -1158,43 +1151,33 @@ fn source(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
         |input| {
             let (input, _) = tag("state")(input)?;
             let (input, _) = whitespace(input)?;
-            let (input, parsed_state) = signed(input)?;
-            let cmd = parsed_state.map(|state| {
-                Command::Source {
-                    channel,
-                    field: SourceField::Rate,
-                    signal: Signal::Cosine,
-                    frequency: 0.0,
-                    symmetry: 0.0,
-                    amplitude: 0.0,
-                    offset: 0.0,
-                    phase: 0.0,
-                    length: 0,
-                    state,
-                    rate: 0
+            let (input, state) = signed(input)?;
+            let cmd = match state {
+                Ok(value) => match Command::default_source(SourceField::State) {
+                    Command::Source(mut data) => {
+                        data.state = value;
+                        Ok(Command::Source(data))
+                    }
+                    _ => unreachable!()
                 }
-            });
+                Err(e) => Err(e)
+            };
             Ok((input, cmd))
         },
         |input| {
             let (input, _) = tag("rate")(input)?;
             let (input, _) = whitespace(input)?;
-            let (input, value) = signed(input)?;
-            let cmd = value.map(|parsed_rate| {
-                Command::Source {
-                    channel,
-                    field: SourceField::Rate,
-                    signal: Signal::Cosine,
-                    frequency: 0.0,
-                    symmetry: 0.0,
-                    amplitude: 0.0,
-                    offset: 0.0,
-                    phase: 0.0,
-                    length: 0,
-                    state: 0,
-                    rate: parsed_rate as i32
+            let (input, rate) = signed(input)?;
+            let cmd = match rate {
+                Ok(value) => match Command::default_source(SourceField::Rate) {
+                    Command::Source(mut data) => {
+                        data.rate = value as i32;
+                        Ok(Command::Source(data))
+                    }
+                    _ => unreachable!()
                 }
-            });
+                Err(e) => Err(e)
+            };
             Ok((input, cmd))
         }
     ))(input)?;
@@ -1257,27 +1240,30 @@ fn pounder_clock(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
         |input| {
             let (input, _) = tag("multiplier")(input)?;
             let (input, _) = whitespace(input)?;
-            let (input, parsed_multiplier) = unsigned(input)?;
-            let cmd = parsed_multiplier.map(|value| {
-                Command::PounderClock {
-                    field: PounderClockField::Multiplier,
-                    multiplier: value as u8,
-                    reference_clock: 0.0,
-                    external_clock: false
+            let (input, multiplier) = unsigned(input)?;
+            let cmd = match multiplier {
+                Ok(value) => match Command::default_pounder_clock(PounderClockField::Multiplier) {
+                    Command::PounderClock(mut data) => {
+                        data.multiplier = value as u8;
+                        Ok(Command::PounderClock(data))
+                    }
+                    _ => unreachable!()
                 }
-            });
+                Err(e) => Err(e)
+            };
             Ok((input, cmd))
         },
         |input| {
             let (input, _) = tag("reference_clock")(input)?;
             let (input, _) = whitespace(input)?;
-            let (input, parsed_reference_clock) = float(input)?;
-            let cmd = parsed_reference_clock.map(|value| {
-                Command::PounderClock {
-                    field: PounderClockField::Reference_clock,
-                    multiplier: 0,
-                    reference_clock: value as f32,
-                    external_clock: false
+            let (input, reference_clock) = float(input)?;
+            let cmd = reference_clock.map(|value| {
+                match Command::default_pounder_clock(PounderClockField::Reference_clock) {
+                    Command::PounderClock(mut data) => {
+                        data.reference_clock = value as f32;
+                        Command::PounderClock(data)
+                    }
+                    _ => unreachable!()
                 }
             });
             Ok((input, cmd))
@@ -1289,11 +1275,12 @@ fn pounder_clock(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 value(true, tag("True")),
                 value(false, tag("False"))
             ))(input)?;
-            let cmd = Command::PounderClock {
-                field: PounderClockField::External_clock,
-                multiplier: 0,
-                reference_clock: 0.0,
-                external_clock
+            let cmd = match Command::default_pounder_clock(PounderClockField::External_clock) {
+                Command::PounderClock(mut data) => {
+                    data.external_clock = external_clock;
+                    Command::PounderClock(data)
+                }
+                _ => unreachable!()
             };
             Ok((input, Ok(cmd)))
         }
@@ -1312,7 +1299,7 @@ fn pounder_channel(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
     ))(input)?;
     let (input, _) = whitespace(input)?;
     let (input, channel) = channel(input)?;
-    let (input, (field, _, parsed_value)) = tuple((
+    let (input, (field, _, value)) = tuple((
         alt((
             value(PounderChannelField::Dds_frequency, tag("dds_frequency")),
             value(PounderChannelField::Phase_offset, tag("dds_phase_offset")),
@@ -1322,26 +1309,23 @@ fn pounder_channel(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
         whitespace,
         float
     ))(input)?;
-    match parsed_value {
+    match value {
         Ok(value) => {
             let (dds_frequency, phase_offset, amplitude, attenuation) = match field {
                 PounderChannelField::Dds_frequency => (value as f32, 0.0, 0.0, 0.0),
                 PounderChannelField::Phase_offset => (0.0, value as f32, 0.0, 0.0),
                 PounderChannelField::Amplitude => (0.0, 0.0, value as f32, 0.0),
                 PounderChannelField::Attenuation => (0.0, 0.0, 0.0, value as f32),
+            };
+            let cmd = match Command::default_pounder_channel(in_out, channel, field) {
+                Command::PounderChannel(mut data) => {
+                    (data.dds_frequency, data.phase_offset, data.amplitude, data.attenuation) = (dds_frequency, phase_offset, amplitude, attenuation);
+                    Command::PounderChannel(data)
+                }
                 _ => unreachable!()
             };
-            let cmd = Command::PounderChannel {
-                in_out,
-                channel,
-                field,
-                dds_frequency,
-                phase_offset,
-                amplitude,
-                attenuation
-            };
             let (input, _) = end(input)?;
-            return Ok((input, Ok(cmd)))
+            Ok((input, Ok(cmd)))
         }
         Err(_e) => return Ok((input, Err(Error::ParseFloat)))
     }
