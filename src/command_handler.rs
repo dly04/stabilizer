@@ -14,6 +14,7 @@ use crate::{
     command_parser,
     command_parser::{Command, ShowCommand}
 };
+use idsp::iir::BiquadRepr;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Handler {
@@ -75,8 +76,8 @@ impl Handler {
             Command::PounderFrequency { frequency } => Handler::change_pounder_frequency(socket, settings, frequency),
             Command::Gain {channel, gain} => Handler::gain(socket, settings, channel, gain),
             Command::BiquadBa(biquad_ba_data) => Handler::biquad_ba(socket, settings, biquad_ba_data),
-            Command::BiquadRaw(biquad_raw_data) => Handler::biquad_raw(socket),
-            Command::BiquadPid(biquad_pid_data) => Handler::biquad_pid(socket),
+            Command::BiquadRaw(biquad_raw_data) => Handler::biquad_raw(socket, settings, biquad_raw_data),
+            Command::BiquadPid(biquad_pid_data) => Handler::biquad_pid(socket, settings, biquad_pid_data),
             Command::BiquadFilter(biquad_filter_data) => Handler::biquad_filter(socket),
             Command::Run { channel, run } => Handler::run(socket),
             Command::Source(source_data) => Handler::source(socket),
@@ -124,25 +125,101 @@ impl Handler {
         Ok(Handler::Handled)
     }
 
-    fn biquad_ba(socket: &mut TcpSocket, settings: &mut DualIir, biquad_ba_data: command_parser::BiquadBaData) -> Result<Handler, Error> {
+    fn biquad_ba(socket: &mut TcpSocket, settings: &mut DualIir, cmd: command_parser::BiquadBaData) -> Result<Handler, Error> {
         info!("handling biquad_ba");
-        match biquad_ba_data.field {
-            command_parser::BiquadBaField::Ba => {
-                settings.ch[channel].biquad[0].repr.
-            } 
+        let channel = cmd.channel;
+        match &mut settings.ch[channel].biquad[0].repr {
+            BiquadRepr::Ba(data) => {
+                match &cmd.field {
+                    command_parser::BiquadBaField::Ba => {
+                        data.ba = [[cmd.ba[0], cmd.ba[1], cmd.ba[2]], [cmd.ba[3], cmd.ba[4], cmd.ba[5]]];
+                    }
+                    command_parser::BiquadBaField::U => {
+                        data.u = cmd.u
+                    }
+                    command_parser::BiquadBaField::Min => {
+                        data.min = cmd.min
+                    }
+                    command_parser::BiquadBaField::Max => {
+                        data.max = cmd.max
+                    }
+                }
+            }
+            _ => {
+                let ba = idsp::iir::Ba::<f32> {
+                    ba: [[cmd.ba[0], cmd.ba[1], cmd.ba[2]], [cmd.ba[3], cmd.ba[4], cmd.ba[5]]],
+                    u: cmd.u,
+                    min: cmd.min,
+                    max: cmd.max
+                };
+                settings.ch[channel].biquad[0].repr = BiquadRepr::Ba(ba);
+            }
         }
         send_line(socket, b"{}");
         Ok(Handler::Handled)
     }
 
-    fn biquad_raw(socket: &mut TcpSocket) -> Result<Handler, Error> {
+    fn biquad_raw(socket: &mut TcpSocket, settings: &mut DualIir, cmd: command_parser::BiquadRawData) -> Result<Handler, Error> {
         info!("handling biquad_raw");
+        let channel = cmd.channel;
+        match &mut settings.ch[channel].biquad[0].repr {
+            BiquadRepr::Raw(data) => {
+                match cmd.field {
+                    command_parser::BiquadRawField::Ba => {
+                        let ba_mut = data.ba_mut();
+                        *ba_mut = [cmd.ba[0], cmd.ba[1], cmd.ba[2], cmd.ba[3], cmd.ba[4]]
+                    },
+                    command_parser::BiquadRawField::U => {
+                        data.set_u(cmd.u)
+                    },
+                    command_parser::BiquadRawField::Min => {
+                        data.set_min(cmd.min)
+                    },
+                    command_parser::BiquadRawField::Max => {
+                        data.set_max(cmd.max)
+                    }
+                }
+            }
+            _ => {
+                let mut data = idsp::iir::Biquad::<f32>::default();
+                match cmd.field {
+                    command_parser::BiquadRawField::Ba => {
+                        let ba_mut = data.ba_mut();
+                        *ba_mut = [cmd.ba[0], cmd.ba[1], cmd.ba[2], cmd.ba[3], cmd.ba[4]]
+                    },
+                    command_parser::BiquadRawField::U => {
+                        data.set_u(cmd.u)
+                    },
+                    command_parser::BiquadRawField::Min => {
+                        data.set_min(cmd.min)
+                    },
+                    command_parser::BiquadRawField::Max => {
+                        data.set_max(cmd.max)
+                    }
+                };
+                settings.ch[channel].biquad[0].repr = BiquadRepr::Raw(data)
+            }
+        }
         send_line(socket, b"{}");
         Ok(Handler::Handled)
     }
 
-    fn biquad_pid(socket: &mut TcpSocket) -> Result<Handler, Error> {
+    fn biquad_pid(socket: &mut TcpSocket, settings: &mut DualIir, cmd: command_parser::BiquadPidData) -> Result<Handler, Error> {
         info!("handling biquad_pid");
+        let channel = cmd.channel;
+        match &mut settings.ch[channel].biquad[0].repr {
+            BiquadRepr::Pid(data) => {
+                match cmd.field {
+                    command_parser::BiquadPidField::Order => {
+
+                    }
+                    command_parser::BiquadPidField::Gain => {
+                        data.gain.value = [cmd.gain.i2, cmd.gain.i, cmd.gain.p, cmd.gain.d, cmd.gain.d2]
+                    }
+                }
+            }
+            _ => {}
+        }
         send_line(socket, b"{}");
         Ok(Handler::Handled)
     }

@@ -212,6 +212,7 @@ use serde::{Deserialize, Serialize};
 
 use log::info;
 use crate::convert;
+use idsp::iir::Pid;
 
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -347,34 +348,34 @@ pub enum ShowCommand {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BiquadBaData {
-    channel: usize,
-    field: BiquadBaField,
-    ba: [f64; 6],
-    u: f64,
-    min: f64,
-    max: f64
+    pub channel: usize,
+    pub field: BiquadBaField,
+    pub ba: [f32; 6],
+    pub u: f32,
+    pub min: f32,
+    pub max: f32
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BiquadRawData {
-    channel: usize,
-    field: BiquadRawField,
-    ba: [f64; 5],
-    u: f64,
-    min: f64,
-    max: f64
+    pub channel: usize,
+    pub field: BiquadRawField,
+    pub ba: [f32; 5],
+    pub u: f32,
+    pub min: f32,
+    pub max: f32
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BiquadPidData {
-    channel: usize,
-    field: BiquadPidField,
-    order: Order,
-    gain: PidParam,
-    limit: PidParam,
-    setpoint: f64,
-    min: f64,
-    max: f64
+    pub channel: usize,
+    pub field: BiquadPidField,
+    pub order: idsp::iir::Order,
+    pub gain: PidParam,
+    pub limit: PidParam,
+    pub setpoint: f64,
+    pub min: f64,
+    pub max: f64
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -432,20 +433,13 @@ pub enum BiquadTyp {
     Filter
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Order {
-    P,
-    I,
-    I2
-}
-
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct PidParam {
-    pub i2: f64,
-    pub i: f64,
-    pub p: f64,
-    pub d: f64,
-    pub d2: f64
+    pub i2: f32,
+    pub i: f32,
+    pub p: f32,
+    pub d: f32,
+    pub d2: f32
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -741,7 +735,7 @@ fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             let (input, (b0, _, b1, _, b2, _, a0, _, a1, _, a2)) = parse_6_f32(input)?;
             let ba_array = match (b0, b1, b2, a0, a1, a2) {
                 (Ok(b0), Ok(b1), Ok(b2), Ok(a0), Ok(a1), Ok(a2)) =>
-                    [b0, b1, b2, a0, a1, a2],
+                    [b0 as f32, b1 as f32, b2 as f32, a0 as f32, a1 as f32, a2 as f32],
                 _ => return Ok((input, Err(Error::ParseFloat))),
             };
             let cmd = match Command::default_biquad_ba(channel, BiquadBaField::Ba) {
@@ -766,9 +760,9 @@ fn biquad_ba(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             let param_result = match value {
                 Ok(value) => {
                     let (u, min, max) = match field {
-                        BiquadBaField::U => (value, 0.0, 0.0),
-                        BiquadBaField::Min => (0.0, value, 0.0),
-                        BiquadBaField::Max => (0.0, 0.0, value),
+                        BiquadBaField::U => (value as f32, 0.0, 0.0),
+                        BiquadBaField::Min => (0.0, value as f32, 0.0),
+                        BiquadBaField::Max => (0.0, 0.0, value as f32),
                         _ => unreachable!()
                     };
                     let cmd = match Command::default_biquad_ba(channel, field) {
@@ -807,7 +801,7 @@ fn biquad_raw(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             let (input, (b0, _, b1, _, b2, _, a1, _, a2)) = parse_5_f32(input)?;
             let ba_array = match (b0, b1, b2, a1, a2) {
                 (Ok(b0), Ok(b1), Ok(b2), Ok(a1), Ok(a2)) =>
-                    [b0, b1, b2, a1, a2],
+                    [b0 as f32, b1 as f32, b2 as f32, a1 as f32, a2 as f32],
                 _ => return Ok((input, Err(Error::ParseFloat)))
             };
             let cmd = match Command::default_biquad_raw(channel, BiquadRawField::Ba) {
