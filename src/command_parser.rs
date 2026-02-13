@@ -212,7 +212,8 @@ use serde::{Deserialize, Serialize};
 
 use log::info;
 use crate::convert;
-use idsp::iir::Pid;
+use crate::dual_iir_lib::Run;
+use signal_generator::Signal;
 
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -280,7 +281,7 @@ impl Command {
         Command::BiquadPid(BiquadPidData {
             channel,
             field,
-            order: Order::P,
+            order: idsp::iir::Order::P,
             gain: PidParam::default(),
             limit: PidParam::default(),
             setpoint: 0.0,
@@ -304,8 +305,9 @@ impl Command {
         })
     }
 
-    fn default_source(field: SourceField) -> Self {
+    fn default_source(channel:usize, field: SourceField) -> Self {
         Command::Source(SourceData {
+            channel,
             field,
             signal: Signal::Cosine,
             frequency: 0.0,
@@ -373,9 +375,9 @@ pub struct BiquadPidData {
     pub order: idsp::iir::Order,
     pub gain: PidParam,
     pub limit: PidParam,
-    pub setpoint: f64,
-    pub min: f64,
-    pub max: f64
+    pub setpoint: f32,
+    pub min: f32,
+    pub max: f32
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -394,16 +396,17 @@ pub struct BiquadFilterData {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SourceData {
-    field: SourceField,
-    signal: Signal,
-    frequency: f64,
-    symmetry: f64,
-    amplitude: f64,
-    offset: f64,
-    phase: f64,
-    length: u32,
-    state: i64,
-    rate: i32
+    pub channel: usize,
+    pub field: SourceField,
+    pub signal: Signal,
+    pub frequency: f64,
+    pub symmetry: f64,
+    pub amplitude: f64,
+    pub offset: f64,
+    pub phase: f64,
+    pub length: u32,
+    pub state: i64,
+    pub rate: i32
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -460,22 +463,6 @@ pub enum FilterShape {
     Q(f64),
     Bandwidth(f64),
     Slope(f64)
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Run {
-    Run,
-    Hold,
-    External
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Signal {
-    Cosine,
-    Square,
-    Triangle,
-    WhiteNoise,
-    SweptSine
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -826,9 +813,9 @@ fn biquad_raw(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             let param_result = match value {
                 Ok(value) => {
                     let (u, min, max) = match field {
-                        BiquadRawField::U => (value, 0.0, 0.0),
-                        BiquadRawField::Min => (0.0, value, 0.0),
-                        BiquadRawField::Max => (0.0, 0.0, value),
+                        BiquadRawField::U => (value as f32, 0.0, 0.0),
+                        BiquadRawField::Min => (0.0, value as f32, 0.0),
+                        BiquadRawField::Max => (0.0, 0.0, value as f32),
                         _ => unreachable!()
                     };
                     let cmd = match Command::default_biquad_raw(channel, field) {
@@ -861,9 +848,9 @@ fn biquad_pid(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             let (input, _) = tag("order")(input)?;
             let (input, _) = whitespace(input)?;
             let (input, order) = alt((
-                value(Order::P, tag("P")),
-                value(Order::I, tag("I")),
-                value(Order::I2, tag("I2"))
+                value(idsp::iir::Order::P, tag("P")),
+                value(idsp::iir::Order::I, tag("I")),
+                value(idsp::iir::Order::I2, tag("I2"))
             ))(input)?;
             let cmd = match Command::default_biquad_pid(channel, BiquadPidField::Order) {
                 Command::BiquadPid(mut data) => {
@@ -889,14 +876,14 @@ fn biquad_pid(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 (Ok(i2), Ok(i), Ok(p), Ok(d), Ok(d2)) => {
                     match field {
                         BiquadPidField::Gain => (PidParam {
-                                i2, i, p, d, d2
+                                i2: i2 as f32, i: i as f32, p: p as f32, d: d as f32, d2: d2 as f32
                             }, PidParam {
                                 i2: 0.0, i: 0.0, p: 0.0, d: 0.0, d2: 0.0
                             }),
                         BiquadPidField::Limit => (PidParam {
                                 i2: 0.0, i: 0.0, p: 0.0, d: 0.0, d2: 0.0
                             }, PidParam {
-                                i2, i, p, d, d2
+                                i2: i2 as f32, i: i as f32, p: p as f32, d: d as f32, d2: d2 as f32
                             }),
                         _ => unreachable!()
                     }
@@ -925,9 +912,9 @@ fn biquad_pid(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             match value {
                 Ok(value) => {
                     let (setpoint, min, max) = match field {
-                        BiquadPidField::Setpoint => (value, 0.0, 0.0),
-                        BiquadPidField::Min => (0.0, value, 0.0),
-                        BiquadPidField::Max => (0.0, 0.0, value),
+                        BiquadPidField::Setpoint => (value as f32, 0.0, 0.0),
+                        BiquadPidField::Min => (0.0, value as f32, 0.0),
+                        BiquadPidField::Max => (0.0, 0.0, value as f32),
                         _ => unreachable!()
                     };
                     let cmd = match Command::default_biquad_pid(channel, field) {
@@ -1084,7 +1071,7 @@ fn source(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                 value(Signal::WhiteNoise, tag("WhiteNoise")),
                 value(Signal::SweptSine, tag("SweptSine"))
             ))(input)?;
-            let cmd = match Command::default_source(SourceField::Signal) {
+            let cmd = match Command::default_source(channel, SourceField::Signal) {
                 Command::Source(mut data) => {
                     data.signal = signal;
                     Command::Source(data)
@@ -1115,7 +1102,7 @@ fn source(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
                         SourceField::Phase => (0.0, 0.0, 0.0, 0.0, value),
                         _ => unreachable!()
                     };
-                    let cmd = match Command::default_source(field) {
+                    let cmd = match Command::default_source(channel, field) {
                         Command::Source(mut data) => {
                             (data.frequency, data.symmetry, data.amplitude, data.offset, data.phase = frequency, symmetry, amplitude, offset, phase);
                             Command::Source(data)
@@ -1132,7 +1119,7 @@ fn source(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             let (input, _) = whitespace(input)?;
             let (input, length) = unsigned(input)?;
             let cmd = length.map(|length| {
-                match Command::default_source(SourceField::Length) {
+                match Command::default_source(channel, SourceField::Length) {
                     Command::Source(mut data) => {
                         data.length = length;
                         Command::Source(data)
@@ -1147,7 +1134,7 @@ fn source(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             let (input, _) = whitespace(input)?;
             let (input, state) = signed(input)?;
             let cmd = match state {
-                Ok(value) => match Command::default_source(SourceField::State) {
+                Ok(value) => match Command::default_source(channel, SourceField::State) {
                     Command::Source(mut data) => {
                         data.state = value;
                         Ok(Command::Source(data))
@@ -1163,7 +1150,7 @@ fn source(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             let (input, _) = whitespace(input)?;
             let (input, rate) = signed(input)?;
             let cmd = match rate {
-                Ok(value) => match Command::default_source(SourceField::Rate) {
+                Ok(value) => match Command::default_source(channel, SourceField::Rate) {
                     Command::Source(mut data) => {
                         data.rate = value as i32;
                         Ok(Command::Source(data))

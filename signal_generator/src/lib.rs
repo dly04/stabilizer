@@ -9,7 +9,7 @@ use rand_xorshift::XorShiftRng;
 use serde::{Deserialize, Serialize};
 
 /// Types of signals that can be generated.
-#[derive(Copy, Clone, Debug, Deserialize, Serialize)]
+#[derive(Copy, Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub enum Signal {
     Cosine,
     Square,
@@ -42,33 +42,33 @@ impl Signal {
 pub struct Config {
     /// The signal type that should be generated. See [Signal] variants.
     #[tree(with=miniconf::leaf)]
-    signal: Signal,
+    pub signal: Signal,
 
     /// The frequency of the generated signal in Hertz.
-    frequency: f32,
+    pub frequency: f32,
 
     /// The normalized symmetry of the signal. At 0% symmetry, the duration of the first half oscillation is minimal.
     /// At 25% symmetry, the first half oscillation lasts for 25% of the signal period. For square wave output this
     /// symmetry is the duty cycle.
-    symmetry: f32,
+    pub symmetry: f32,
 
     /// The amplitude of the output signal
-    amplitude: f32,
+    pub amplitude: f32,
 
     /// Output offset
-    offset: f32,
+    pub offset: f32,
 
     /// The initial phase of the period output signal in turns
-    phase: f32,
+    pub phase: f32,
 
     /// Number of half periods (periodic) or samples (sweep and noise), 0 for infinte
-    length: u32,
+    pub length: u32,
 
     /// Sweep: initial state
-    state: i64,
+    pub state: i64,
 
     /// Sweep: Sweep rate
-    rate: i32,
+    pub rate: i32,
 }
 
 impl Default for Config {

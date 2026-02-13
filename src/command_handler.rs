@@ -15,6 +15,7 @@ use crate::{
     command_parser::{Command, ShowCommand}
 };
 use idsp::iir::BiquadRepr;
+use crate::dual_iir_lib::Run;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Handler {
@@ -78,15 +79,14 @@ impl Handler {
             Command::BiquadBa(biquad_ba_data) => Handler::biquad_ba(socket, settings, biquad_ba_data),
             Command::BiquadRaw(biquad_raw_data) => Handler::biquad_raw(socket, settings, biquad_raw_data),
             Command::BiquadPid(biquad_pid_data) => Handler::biquad_pid(socket, settings, biquad_pid_data),
-            Command::BiquadFilter(biquad_filter_data) => Handler::biquad_filter(socket),
-            Command::Run { channel, run } => Handler::run(socket),
-            Command::Source(source_data) => Handler::source(socket),
+            Command::BiquadFilter(biquad_filter_data) => todo!(),
+            Command::Run { channel, run } => Handler::run(socket, settings, channel, run),
+            Command::Source(source_data) => Handler::source(socket, settings, source_data),
             Command::Trigger => Handler::trigger(socket),
             Command::TelemetryPeriod(telemetry_period) => Handler::telemetry_period(socket),
             Command::Stream{ ip, port } => Handler::stream(socket),
             Command::PounderClock(pounder_clock_data) => Handler::pounder_clock(socket),
             Command::PounderChannel(pounder_channel_data) => Handler::pounder_channel(socket),
-            _ => todo!(),
         }
     }
 
@@ -211,14 +211,38 @@ impl Handler {
             BiquadRepr::Pid(data) => {
                 match cmd.field {
                     command_parser::BiquadPidField::Order => {
-
+                        data.order = cmd.order
                     }
                     command_parser::BiquadPidField::Gain => {
                         data.gain.value = [cmd.gain.i2, cmd.gain.i, cmd.gain.p, cmd.gain.d, cmd.gain.d2]
                     }
+                    command_parser::BiquadPidField::Limit => {
+                        data.limit.value = [cmd.limit.i2, cmd.gain.i, cmd.gain.p, cmd.gain.d, cmd.gain.d2]
+                    }
+                    command_parser::BiquadPidField::Setpoint => {
+                        data.setpoint = cmd.setpoint
+                    }
+                    command_parser::BiquadPidField::Min => {
+                        data.min = cmd.min
+                    }
+                    command_parser::BiquadPidField::Max => {
+                        data.max = cmd.max
+                    }
                 }
             }
-            _ => {}
+            _ => {
+                let mut data = idsp::iir::Pid::<f32> {
+                    order: cmd.order,
+                    gain: idsp::iir::Gain::<f32>::default(),
+                    limit: idsp::iir::Gain::<f32>::default(),
+                    setpoint: cmd.setpoint,
+                    min: cmd.min,
+                    max: cmd.max
+                };
+                data.gain.value = [cmd.gain.i2, cmd.gain.i, cmd.gain.p, cmd.gain.d, cmd.gain.d2];
+                data.limit.value = [cmd.limit.i2, cmd.limit.i, cmd.limit.p, cmd.limit.d, cmd.limit.d2];
+                settings.ch[channel].biquad[0].repr = BiquadRepr::Pid(data)
+            }
         }
         send_line(socket, b"{}");
         Ok(Handler::Handled)
@@ -230,14 +254,19 @@ impl Handler {
         Ok(Handler::Handled)
     }
 
-    fn run(socket: &mut TcpSocket) -> Result<Handler, Error> {
+    fn run(socket: &mut TcpSocket, settings: &mut DualIir, channel:usize, run: Run) -> Result<Handler, Error> {
         info!("handling run");
+        settings.ch[channel].run = run;
         send_line(socket, b"{}");
         Ok(Handler::Handled)
     }
 
-    fn source(socket: &mut TcpSocket) -> Result<Handler, Error> {
+    fn source(socket: &mut TcpSocket, settings: &mut DualIir, cmd: command_parser::SourceData) -> Result<Handler, Error> {
         info!("handling source");
+        let channel = cmd.channel;
+        // match cmd.field {
+        //     command_parser::SourceField::Signal => {}
+        // }
         send_line(socket, b"{}");
         Ok(Handler::Handled)
     }
