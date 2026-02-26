@@ -179,7 +179,7 @@
     source <0/1> length <u32>
     source <0/1> state <i64>
     source <0/1> rate <i32>
-    trigger <0/1>
+    trigger <True/False>
     telemetry_period <f32>
     stream <addr>:<port>    //192.168.0.1:1234
     pounder clock multiplier <u8>
@@ -235,8 +235,8 @@ pub enum Command {
         run: Run
     },
     Source(SourceData),
-    Trigger,
-    TelemetryPeriod(f64),
+    Trigger(bool),
+    TelemetryPeriod(f32),
     Stream{
         ip: [u8; 4],
         port: u16
@@ -399,11 +399,11 @@ pub struct SourceData {
     pub channel: usize,
     pub field: SourceField,
     pub signal: Signal,
-    pub frequency: f64,
-    pub symmetry: f64,
-    pub amplitude: f64,
-    pub offset: f64,
-    pub phase: f64,
+    pub frequency: f32,
+    pub symmetry: f32,
+    pub amplitude: f32,
+    pub offset: f32,
+    pub phase: f32,
     pub length: u32,
     pub state: i64,
     pub rate: i32
@@ -411,21 +411,21 @@ pub struct SourceData {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PounderClockData {
-    field: PounderClockField,
-    multiplier: u8,
-    reference_clock: f32,
-    external_clock: bool
+    pub field: PounderClockField,
+    pub multiplier: u8,
+    pub reference_clock: f32,
+    pub external_clock: bool
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PounderChannelData {
-    in_out: InOut,
-    channel: usize,
-    field: PounderChannelField,
-    dds_frequency: f32,
-    phase_offset: f32,
-    amplitude: f32,
-    attenuation: f32
+    pub in_out: InOut,
+    pub channel: usize,
+    pub field: PounderChannelField,
+    pub dds_frequency: f32,
+    pub phase_offset: f32,
+    pub amplitude: f32,
+    pub attenuation: f32
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1095,11 +1095,11 @@ fn source(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
             match value {
                 Ok(value) => {
                     let (frequency, symmetry, amplitude, offset, phase) = match field {
-                        SourceField::Frequency => (value, 0.0, 0.0, 0.0, 0.0),
-                        SourceField::Symmetry => (0.0, value, 0.0, 0.0, 0.0),
-                        SourceField::Amplitude => (0.0, 0.0, value, 0.0, 0.0),
-                        SourceField::Offset => (0.0, 0.0, 0.0, value, 0.0),
-                        SourceField::Phase => (0.0, 0.0, 0.0, 0.0, value),
+                        SourceField::Frequency => (value as f32, 0.0, 0.0, 0.0, 0.0),
+                        SourceField::Symmetry => (0.0, value as f32, 0.0, 0.0, 0.0),
+                        SourceField::Amplitude => (0.0, 0.0, value as f32, 0.0, 0.0),
+                        SourceField::Offset => (0.0, 0.0, 0.0, value as f32, 0.0),
+                        SourceField::Phase => (0.0, 0.0, 0.0, 0.0, value as f32),
                         _ => unreachable!()
                     };
                     let cmd = match Command::default_source(channel, field) {
@@ -1169,16 +1169,26 @@ fn source(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
 
 fn trigger(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
     let (input, _) = tag("trigger")(input)?;
+    let (input, result) = alt((
+        |input| {
+            let (input, _) = tag("True")(input)?;
+            Ok((input, Ok(Command::Trigger(true))))
+        },
+        |input| {
+            let (input, _) = tag("False")(input)?;
+            Ok((input, Ok(Command::Trigger(false))))
+        }
+    ))(input)?;
     let (input, _) = end(input)?;
-    Ok((input, Ok(Command::Trigger)))
+    Ok((input, result))
 }
 
 fn telemetry_period(input: &[u8]) -> IResult<&[u8], Result<Command, Error>> {
     let (input, _) = tag("telemetry_period")(input)?;
     let (input, _) = whitespace(input)?;
     let (input, value) = float(input)?;
-    let cmd = value.map(|telemetry_period| {
-        Command::TelemetryPeriod (telemetry_period)
+    let cmd = value.map(|telemetry_period: f64| {
+        Command::TelemetryPeriod (telemetry_period as f32)
     });
     Ok((input, cmd))
 }

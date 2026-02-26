@@ -8,6 +8,7 @@ use serde_json_core;
 
 use crate::dual_iir_lib::DualIir;
 use miniconf::Leaf;
+use core::net:: {SocketAddr, Ipv4Addr};
 
 use crate::{
     convert,
@@ -82,11 +83,11 @@ impl Handler {
             Command::BiquadFilter(biquad_filter_data) => todo!(),
             Command::Run { channel, run } => Handler::run(socket, settings, channel, run),
             Command::Source(source_data) => Handler::source(socket, settings, source_data),
-            Command::Trigger => Handler::trigger(socket),
-            Command::TelemetryPeriod(telemetry_period) => Handler::telemetry_period(socket),
-            Command::Stream{ ip, port } => Handler::stream(socket),
-            Command::PounderClock(pounder_clock_data) => Handler::pounder_clock(socket),
-            Command::PounderChannel(pounder_channel_data) => Handler::pounder_channel(socket),
+            Command::Trigger(trigger) => Handler::trigger(socket, settings, trigger),
+            Command::TelemetryPeriod(telemetry_period) => Handler::telemetry_period(socket, settings, telemetry_period),
+            Command::Stream{ ip, port } => Handler::stream(socket, settings, ip, port),
+            Command::PounderClock(pounder_clock_data) => Handler::pounder_clock(socket, settings, pounder_clock_data),
+            Command::PounderChannel(pounder_channel_data) => Handler::pounder_channel(socket, settings, pounder_channel_data),
         }
     }
 
@@ -127,8 +128,7 @@ impl Handler {
 
     fn biquad_ba(socket: &mut TcpSocket, settings: &mut DualIir, cmd: command_parser::BiquadBaData) -> Result<Handler, Error> {
         info!("handling biquad_ba");
-        let channel = cmd.channel;
-        match &mut settings.ch[channel].biquad[0].repr {
+        match &mut settings.ch[cmd.channel].biquad[0].repr {
             BiquadRepr::Ba(data) => {
                 match &cmd.field {
                     command_parser::BiquadBaField::Ba => {
@@ -152,7 +152,7 @@ impl Handler {
                     min: cmd.min,
                     max: cmd.max
                 };
-                settings.ch[channel].biquad[0].repr = BiquadRepr::Ba(ba);
+                settings.ch[cmd.channel].biquad[0].repr = BiquadRepr::Ba(ba);
             }
         }
         send_line(socket, b"{}");
@@ -161,8 +161,7 @@ impl Handler {
 
     fn biquad_raw(socket: &mut TcpSocket, settings: &mut DualIir, cmd: command_parser::BiquadRawData) -> Result<Handler, Error> {
         info!("handling biquad_raw");
-        let channel = cmd.channel;
-        match &mut settings.ch[channel].biquad[0].repr {
+        match &mut settings.ch[cmd.channel].biquad[0].repr {
             BiquadRepr::Raw(data) => {
                 match cmd.field {
                     command_parser::BiquadRawField::Ba => {
@@ -197,7 +196,7 @@ impl Handler {
                         data.set_max(cmd.max)
                     }
                 };
-                settings.ch[channel].biquad[0].repr = BiquadRepr::Raw(data)
+                settings.ch[cmd.channel].biquad[0].repr = BiquadRepr::Raw(data)
             }
         }
         send_line(socket, b"{}");
@@ -206,8 +205,7 @@ impl Handler {
 
     fn biquad_pid(socket: &mut TcpSocket, settings: &mut DualIir, cmd: command_parser::BiquadPidData) -> Result<Handler, Error> {
         info!("handling biquad_pid");
-        let channel = cmd.channel;
-        match &mut settings.ch[channel].biquad[0].repr {
+        match &mut settings.ch[cmd.channel].biquad[0].repr {
             BiquadRepr::Pid(data) => {
                 match cmd.field {
                     command_parser::BiquadPidField::Order => {
@@ -241,7 +239,7 @@ impl Handler {
                 };
                 data.gain.value = [cmd.gain.i2, cmd.gain.i, cmd.gain.p, cmd.gain.d, cmd.gain.d2];
                 data.limit.value = [cmd.limit.i2, cmd.limit.i, cmd.limit.p, cmd.limit.d, cmd.limit.d2];
-                settings.ch[channel].biquad[0].repr = BiquadRepr::Pid(data)
+                settings.ch[cmd.channel].biquad[0].repr = BiquadRepr::Pid(data)
             }
         }
         send_line(socket, b"{}");
@@ -263,40 +261,126 @@ impl Handler {
 
     fn source(socket: &mut TcpSocket, settings: &mut DualIir, cmd: command_parser::SourceData) -> Result<Handler, Error> {
         info!("handling source");
-        let channel = cmd.channel;
-        // match cmd.field {
-        //     command_parser::SourceField::Signal => {}
-        // }
+        match cmd.field {
+            command_parser::SourceField::Signal => {
+                settings.ch[cmd.channel].source.signal = cmd.signal;
+            },
+            command_parser::SourceField::Frequency => {
+                settings.ch[cmd.channel].source.frequency = cmd.frequency;
+            },
+            command_parser::SourceField::Symmetry => {
+                settings.ch[cmd.channel].source.symmetry = cmd.symmetry;
+            },
+            command_parser::SourceField::Amplitude => {
+                settings.ch[cmd.channel].source.amplitude = cmd.amplitude;
+            },
+            command_parser::SourceField::Offset => {
+                settings.ch[cmd.channel].source.offset = cmd.offset;
+            },
+            command_parser::SourceField::Phase => {
+                settings.ch[cmd.channel].source.phase = cmd.phase;
+            },
+            command_parser::SourceField::Length => {
+                settings.ch[cmd.channel].source.length = cmd.length;
+            },
+            command_parser::SourceField::State => {
+                settings.ch[cmd.channel].source.state = cmd.state;
+            },
+            command_parser::SourceField::Rate => {
+                settings.ch[cmd.channel].source.rate = cmd.rate;
+            }
+        }
         send_line(socket, b"{}");
         Ok(Handler::Handled)
     }
 
-    fn trigger(socket: &mut TcpSocket) -> Result<Handler, Error> {
+    fn trigger(socket: &mut TcpSocket, settings: &mut DualIir, cmd: bool) -> Result<Handler, Error> {
         info!("handling trigger");
+        settings.trigger = cmd;
         send_line(socket, b"{}");
         Ok(Handler::Handled)
     }
 
-    fn telemetry_period(socket: &mut TcpSocket) -> Result<Handler, Error> {
+    fn telemetry_period(socket: &mut TcpSocket, settings: &mut DualIir, cmd: f32) -> Result<Handler, Error> {
         info!("handling telemetry_period");
+        settings.telemetry_period = cmd;
         send_line(socket, b"{}");
         Ok(Handler::Handled)
     }
 
-    fn stream(socket: &mut TcpSocket) -> Result<Handler, Error> {
+    fn stream(socket: &mut TcpSocket, settings: &mut DualIir, ip: [u8; 4], port: u16) -> Result<Handler, Error> {
         info!("handling stream");
+        let target_addr = SocketAddr::new(Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]).into(), port);
+        settings.stream = stream::Target(target_addr);
         send_line(socket, b"{}");
         Ok(Handler::Handled)
     }
 
-    fn pounder_clock(socket: &mut TcpSocket) -> Result<Handler, Error> {
+    fn pounder_clock(socket: &mut TcpSocket, settings: &mut DualIir, cmd: command_parser::PounderClockData) -> Result<Handler, Error> {
         info!("handling pounder_clock");
+        if let Some(pounder) = &mut settings.pounder {
+            match cmd.field {
+                command_parser::PounderClockField::Multiplier => {
+                    pounder.clock.multiplier = Leaf(cmd.multiplier)
+                },
+                command_parser::PounderClockField::Reference_clock => {
+                    pounder.clock.reference_clock = Leaf(cmd.reference_clock)
+                },
+                command_parser::PounderClockField::External_clock => {
+                    pounder.clock.external_clock = Leaf(cmd.external_clock)
+                }
+            }
+        }
         send_line(socket, b"{}");
         Ok(Handler::Handled)
     }
 
-    fn pounder_channel(socket: &mut TcpSocket) -> Result<Handler, Error> {
+    fn pounder_channel(socket: &mut TcpSocket, settings: &mut DualIir, cmd: command_parser::PounderChannelData) -> Result<Handler, Error> {
         info!("handling pounder_channel");
+        if let Some(pounder) = &mut settings.pounder {
+            match cmd.field {
+                command_parser::PounderChannelField::Dds_frequency => {
+                    match cmd.in_out {
+                        command_parser::InOut::InputChannel => {
+                            pounder.in_channel[cmd.channel].dds.frequency = Leaf(cmd.dds_frequency)
+                        },
+                        command_parser::InOut::OutputChannel => {
+                            pounder.out_channel[cmd.channel].dds.frequency = Leaf(cmd.dds_frequency)
+                        }
+                    }
+                },
+                command_parser::PounderChannelField::Phase_offset => {
+                    match cmd.in_out {
+                        command_parser::InOut::InputChannel => {
+                            pounder.in_channel[cmd.channel].dds.phase_offset = Leaf(cmd.phase_offset)
+                        },
+                        command_parser::InOut::OutputChannel => {
+                            pounder.out_channel[cmd.channel].dds.phase_offset = Leaf(cmd.phase_offset)
+                        }
+                    }
+                },
+                command_parser::PounderChannelField::Amplitude => {
+                    match cmd.in_out {
+                        command_parser::InOut::InputChannel => {
+                            pounder.in_channel[cmd.channel].dds.amplitude = Leaf(cmd.amplitude)
+                        },
+                        command_parser::InOut::OutputChannel => {
+                            pounder.out_channel[cmd.channel].dds.amplitude = Leaf(cmd.amplitude)
+                        }
+                    }
+                },
+                command_parser::PounderChannelField::Attenuation => {
+                    match cmd.in_out {
+                        command_parser::InOut::InputChannel => {
+                            pounder.in_channel[cmd.channel].attenuation = Leaf(cmd.attenuation)
+                        },
+                        command_parser::InOut::OutputChannel => {
+                            pounder.in_channel[cmd.channel].attenuation = Leaf(cmd.amplitude)
+                        }
+                    }
+                }
+            }
+        }
         send_line(socket, b"{}");
         Ok(Handler::Handled)
     }
