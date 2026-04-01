@@ -52,14 +52,16 @@
 //! compile-time-known register update sequence needed for the application, the serialization
 //! process can be done once and then register values can be written into a pre-computed serialized
 //! buffer to avoid the software overhead of much of the serialization process.
+use core::num::Wrapping;
 use log::warn;
 
-use super::{QspiInterface, hrtimer::HighResTimerE};
-use ad9959::{Mode, ProfileSerializer};
+use arbitrary_int::{Number, u14, u24};
+use super::{Profile, QspiInterface, hal, hrtimer::HighResTimerE};
+use ad9959::{Acr, Channel, Mode, ProfileSerializer};
 
 /// The DDS profile update stream.
 pub struct DdsOutput {
-    qspi: QspiInterface,
+    _qspi: QspiInterface,
     io_update_trigger: HighResTimerE,
     mode: Mode,
 }
@@ -84,14 +86,15 @@ impl DdsOutput {
         qspi.start_stream().unwrap();
         Self {
             mode,
-            qspi,
+            _qspi: qspi,
             io_update_trigger,
         }
     }
 
     /// Get a builder for serializing a Pounder DDS profile.
-    pub fn builder(&mut self) -> ProfileSerializer {
-        ProfileSerializer::new(self.mode)
+    pub fn builder(&mut self) -> ProfileBuilder<'_> {
+        let mode = self.mode;
+        ProfileBuilder {dds_output: self, serializer: ProfileSerializer::new(mode)}
     }
 
     /// Write a profile to the stream.
@@ -104,10 +107,10 @@ impl DdsOutput {
     /// # Args
     /// * `profile` - The serialized DDS profile to write.
     #[inline]
-    pub fn write(&mut self, mut profile: ProfileSerializer) {
+    pub fn write(&mut self, profile: &mut ProfileSerializer) {
         // Note(unsafe): We own the QSPI interface, so it is safe to access the registers in a raw
         // fashion.
-        let regs = self.qspi.qspi.inner_mut();
+        let regs = unsafe { &*hal::stm32::QUADSPI::ptr() };
 
         // Warn if the fifo is still at least half full.
         if regs.sr.read().flevel().bits() >= 16 {
@@ -121,5 +124,71 @@ impl DdsOutput {
 
         // Trigger the IO_update signal generating timer to asynchronous create the IO_Update pulse.
         self.io_update_trigger.trigger();
+    }
+}
+
+/// A temporary builder for serializing and writing profiles.
+pub struct ProfileBuilder<'a> {
+    dds_output: &'a mut DdsOutput,
+    serializer: ProfileSerializer,
+}
+
+impl ProfileBuilder<'_> {
+    /// Update a number of channels with the provided configuration
+    ///
+    /// # Args
+    /// * `channels` - A list of channels to apply the configuration to.
+    /// * `ftw` - If provided, indicates a frequency tuning word for the channels.
+    /// * `pow` - If provided, indicates a phase offset word for the channels.
+    /// * `acr` - If provided, indicates the amplitude control register for the channels. The
+    ///   24-bits of the ACR should be stored in the last 3 LSB.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn update_channels(
+        &mut self,
+        channels: Channel,
+        ftw: Option<Wrapping<i32>>,
+        pow: Option<Wrapping<u14>>,
+        acr: Option<u32>,
+    ) -> &mut Self {
+        let pow = pow.map(|pow| {
+            Wrapping(u14::try_new(pow.0.as_u16() & 0x3FFF).unwrap())
+        });
+        let acr = if let Some(acr) = acr {
+            Some(Acr::new_with_raw_value(u24::try_new(acr).unwrap()))
+        } else { None };
+        self.serializer.push(channels, ftw, pow, acr);
+        self
+    }
+
+    /// Update a number of channels with fully defined profile settings.
+    ///
+    /// # Args
+    /// * `channels` - A set of channels to apply the configuration to.
+    /// * `profile` - The complete DDS profile, which defines the frequency tuning word,
+    ///   amplitude control register & the phase offset word of the channels.
+    /// # Note
+    /// The ACR should be stored in the 3 LSB of the word.
+    /// If amplitude scaling is to be used, the "Amplitude multiplier enable" bit must be set.
+    #[inline]
+    pub fn update_channels_with_profile(
+        &mut self,
+        channels: Channel,
+        profile: Profile,
+    ) -> &mut Self {
+        self.serializer.push(
+            channels,
+            Some(profile.frequency_tuning_word),
+            Some(Wrapping(u14::try_new(profile.phase_offset & 0x3FFF).unwrap())),
+            Some(Acr::new_with_raw_value(u24::try_new(profile.amplitude_control).unwrap())),
+        );
+        self
+    }
+
+    /// Write the profile to the DDS asynchronously.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn write(&mut self) {
+        self.dds_output.write(&mut self.serializer);
     }
 }
